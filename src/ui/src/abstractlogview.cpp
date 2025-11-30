@@ -1030,43 +1030,27 @@ void AbstractLogView::scrollContentsBy( int dx, int dy )
 {
     LOG_DEBUG << "[TextWrap:Scroll] scrollContentsBy received dy=" << dy 
               << " scrollValue=" << verticalScrollBar()->value()
+              << " scrollMax=" << verticalScrollBar()->maximum()
               << " useTextWrap=" << useTextWrap_;
 
-    const auto totalLines = logData_->getNbLine();
-    const auto visibleLines = getNbVisibleLines();
-    const auto bottomWrappedLines = useTextWrap_ ? getNbBottomWrappedVisibleLines() : visibleLines;
-    
-    // Calculate lastTopLine - the first line when view is scrolled to bottom
-    // Ensure we don't underflow when there are fewer lines than visible
-    const auto lastTopLine = ( totalLines > bottomWrappedLines )
-        ? ( totalLines - bottomWrappedLines )
-        : LinesCount{ 0 };
+    const auto scrollValue = verticalScrollBar()->value();
+    const auto scrollMax = verticalScrollBar()->maximum();
+    const auto scrollPosition = verticalScrollToLineNumber( scrollValue );
 
-    const auto scrollPosition = verticalScrollToLineNumber( verticalScrollBar()->value() );
+    // Determine if we're at the bottom by checking if scroll value >= maximum.
+    // This avoids the expensive getNbBottomWrappedVisibleLines() call on every scroll.
+    // The scroll range is already calculated correctly by updateScrollBars().
+    const bool atBottom = ( scrollMax > 0 ) ? ( scrollValue >= scrollMax ) : true;
 
-    LOG_DEBUG << "[TextWrap:Scroll] totalLines=" << totalLines.get()
-              << " visibleLines=" << visibleLines.get()
-              << " bottomWrappedLines=" << bottomWrappedLines.get()
-              << " lastTopLine=" << lastTopLine.get()
-              << " scrollPosition=" << scrollPosition.get();
+    LOG_DEBUG << "[TextWrap:Scroll] scrollPosition=" << scrollPosition.get()
+              << " atBottom=" << atBottom;
 
-    // Enter bottom alignment mode when scrolled to or past the lastTopLine.
-    // Note: We removed the `lastTopLine.get() > 0` check because when lastTopLine = 0
-    // (e.g., only 1 long line that wraps), we still need bottom alignment to show
-    // the bottom portion of that wrapped line.
-    if ( scrollPosition.get() >= lastTopLine.get() ) {
-        // The user is at or past the last top line, we need to lock the last line at the bottom
+    if ( atBottom ) {
+        // We're at or past the bottom, lock the last line at the bottom
         LOG_DEBUG << "[TextWrap:Scroll] Entering bottom alignment mode";
-        // When text wrapping is enabled, anchor to the dynamically calculated lastTopLine
-        // instead of using the stale scrollPosition. This ensures correct display when
-        // the viewport height changes, as getNbBottomWrappedVisibleLines() recalculates
-        // based on the current viewport size.
-        if ( useTextWrap_ ) {
-            firstLine_ = LineNumber( lastTopLine.get() );
-        }
-        else {
-            firstLine_ = scrollPosition;
-        }
+        // For text wrap mode, use the scroll maximum as the firstLine anchor.
+        // scrollMax represents the last valid top line (totalLines - unwrappedLinesAtBottom).
+        firstLine_ = verticalScrollToLineNumber( scrollMax );
         lastLineAligned_ = true;
     }
     else {
@@ -1733,12 +1717,16 @@ void AbstractLogView::updateDisplaySize()
 
     // If we were aligned to the bottom, we want to stay aligned to the bottom
     // even if the viewport size has changed (which changes the 'lastTopLine').
-    // We force the scrollbar to the new maximum, which will trigger scrollContentsBy
-    // and correctly re-anchor 'firstLine_' and 'lastLineAligned_'.
-    // This must be done AFTER pixmap is set up so the subsequent paint works correctly.
     if ( wasBottomAligned && !followMode_ ) {
         LOG_DEBUG << "[TextWrap:Resize] Restoring bottom alignment after resize";
-        verticalScrollBar()->setValue( verticalScrollBar()->maximum() );
+        const auto newMax = verticalScrollBar()->maximum();
+        // Explicitly set the bottom alignment state.
+        // This is needed because setValue() might not trigger scrollContentsBy()
+        // if the value doesn't change (e.g., when scrollMax = 0 before and after resize).
+        lastLineAligned_ = true;
+        firstLine_ = verticalScrollToLineNumber( newMax );
+        // Set scroll value to max (might not trigger scrollContentsBy if value unchanged)
+        verticalScrollBar()->setValue( newMax );
     }
 }
 
@@ -1797,8 +1785,12 @@ void AbstractLogView::selectPortionAndDisplayLine( LineNumber line, LinesCount n
 // subtle: this one always jump, even if the line passed is visible.
 void AbstractLogView::jumpToLine( LineNumber line )
 {
-    // Put the selected line in the middle if possible
-    const auto newTopLine = line - LinesCount( getNbVisibleLines().get() / 2 );
+    // Put the selected line in the middle if possible.
+    // When text wrap is enabled, lines can wrap to multiple visual lines, so
+    // we use a smaller offset (divide by 4 instead of 2) to ensure the line
+    // is actually visible in the upper portion of the viewport.
+    const LinesCount::UnderlyingType divisor = useTextWrap_ ? 4 : 2;
+    const auto newTopLine = line - LinesCount( getNbVisibleLines().get() / divisor );
     // This will also trigger a scrollContents event
     verticalScrollBar()->setValue( lineNumberToVerticalScroll( newTopLine ) );
 }
@@ -1934,13 +1926,21 @@ FilePosition AbstractLogView::convertCoordToFilePos( const QPoint& pos ) const
 // Doing so, it will throw itself a scrollContents event.
 void AbstractLogView::displayLine( LineNumber line )
 {
-    // If the line is already the screen
-    if ( ( line >= firstLine_ ) && ( line < ( firstLine_ + getNbVisibleLines() ) ) ) {
-        // Invalidate our cache
-        forceRefresh();
+    // When text wrap is enabled, the check for "line is on screen" is unreliable
+    // because wrapped lines take up more vertical space than getNbVisibleLines() accounts for.
+    // Always call jumpToLine() to ensure correct positioning in text wrap mode.
+    if ( useTextWrap_ ) {
+        jumpToLine( line );
     }
     else {
-        jumpToLine( line );
+        // If the line is already on the screen (non-wrap mode)
+        if ( ( line >= firstLine_ ) && ( line < ( firstLine_ + getNbVisibleLines() ) ) ) {
+            // Invalidate our cache
+            forceRefresh();
+        }
+        else {
+            jumpToLine( line );
+        }
     }
 
     const auto portion = selection_.getPortionForLine( line );

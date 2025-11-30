@@ -191,6 +191,66 @@ Now when `lastTopLine = 0` and `scrollPosition = 0`, we correctly enter bottom a
 - Previously: Bottom of wrapped line was cut off
 - Now: Bottom of wrapped line is properly aligned to viewport bottom
 
+### Bug 8: Window Unresponsive with Wrap Text (Performance Issue)
+**Problem**: When text wrap is enabled, the window becomes unresponsive during scrolling.
+**Root Cause**: The recent changes added a call to `getNbBottomWrappedVisibleLines()` inside `scrollContentsBy()`, which is called on EVERY scroll event. This function:
+1. Iterates through lines from the bottom
+2. Calls `getExpandedLineString()` for each line (expensive I/O operation)
+3. Creates `WrappedString` objects for each line
+
+This O(n) operation on every scroll caused severe performance degradation.
+
+**Fix**: Removed `getNbBottomWrappedVisibleLines()` call from `scrollContentsBy()`. Instead, use the scroll bar's maximum value to determine if we're at the bottom:
+```cpp
+const bool atBottom = ( scrollMax > 0 ) ? ( scrollValue >= scrollMax ) : true;
+```
+The scroll range is already calculated correctly by `updateScrollBars()`, so we reuse that information instead of recalculating.
+
+**Impact**: This was a regression introduced by recent changes. The original code did not have this performance issue.
+
+### Bug 9: FilteredView Click Doesn't Center Line in Main View
+**Problem**: When clicking a line in FilteredView with text wrap enabled, the corresponding line in the main view was not properly centered and could be off-screen.
+**Root Cause**: Two functions had issues with text wrap:
+
+1. `displayLine()` checked if a line was "on screen" using `getNbVisibleLines()`:
+   ```cpp
+   if ( ( line >= firstLine_ ) && ( line < ( firstLine_ + getNbVisibleLines() ) ) )
+   ```
+   This doesn't account for text wrap - a line might appear "on screen" by line number but actually be pushed below the viewport by wrapped content above it.
+
+2. `jumpToLine()` calculated the center position using `getNbVisibleLines() / 2`, which doesn't account for wrapped lines taking more vertical space.
+
+**Fix**: 
+- In `displayLine()`: Always call `jumpToLine()` when text wrap is enabled
+- In `jumpToLine()`: Use a smaller divisor (4 instead of 2) when text wrap is enabled to place the line in the upper portion of the viewport
+
+### Bug 10: Bottom Alignment State Lost After Resize (scrollContentsBy not triggered)
+**Problem**: After resizing, the last line could still be clipped even when bottom alignment should be active.
+**Root Cause**: In `updateDisplaySize()`, when restoring bottom alignment:
+```cpp
+verticalScrollBar()->setValue( verticalScrollBar()->maximum() );
+```
+If the scroll value doesn't change (e.g., when scrollMax = 0 before and after resize), Qt's `setValue()` doesn't emit any signal, so `scrollContentsBy()` is never called. This meant `lastLineAligned_` and `firstLine_` weren't updated for the new viewport size.
+
+**Fix**: Explicitly set the bottom alignment state in `updateDisplaySize()` when restoring bottom alignment, instead of relying on `scrollContentsBy()` being triggered:
+```cpp
+if ( wasBottomAligned && !followMode_ ) {
+    lastLineAligned_ = true;
+    firstLine_ = verticalScrollToLineNumber( newMax );
+    verticalScrollBar()->setValue( newMax );
+}
+```
+
+## Regression Analysis
+
+The following bugs were **introduced by recent changes** (since commit 25c7de6d):
+- **Bug 8 (Performance)**: Added `getNbBottomWrappedVisibleLines()` call in `scrollContentsBy()` - MAJOR REGRESSION
+- **Bug 10 (State Lost)**: The resize handling logic was modified but didn't handle the edge case where `scrollContentsBy()` isn't triggered
+
+The following bugs were **pre-existing** or **edge cases in the new logic**:
+- **Bug 7 (lastTopLine = 0)**: Edge case in the new bottom alignment detection logic
+- **Bug 9 (Click doesn't center)**: Pre-existing issue, but more noticeable with text wrap enabled
+
 ## Debug Logging
 
 All text wrap related logging uses tags for easy filtering:
