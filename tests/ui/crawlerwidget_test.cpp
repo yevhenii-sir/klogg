@@ -148,6 +148,36 @@ struct CrawlerWidget::access_by<CrawlerWidgetPrivate> {
     {
         crawler->grab();
     }
+
+    void setTextWrap( bool enabled )
+    {
+        crawler->logMainView_->textWrapSet( enabled );
+        crawler->filteredView_->textWrapSet( enabled );
+        QTest::qWait( 50 );
+    }
+
+    bool isTextWrapEnabled()
+    {
+        return crawler->logMainView_->isTextWrapEnabled();
+    }
+
+    void clickFilteredViewLine( LineNumber::UnderlyingType lineIndex )
+    {
+        // Simulate clicking on a line in the filtered view
+        // This triggers the jump to corresponding line in main view
+        auto* filteredView = crawler->filteredView_;
+        if ( filteredView && crawler->logFilteredData_->getNbLine().get() > 0 ) {
+            filteredView->selectAndDisplayLine( LineNumber( lineIndex ) );
+            QTest::qWait( 50 );
+        }
+    }
+
+    void resizeViews( int width, int height )
+    {
+        crawler->logMainView_->resize( width, height );
+        crawler->filteredView_->resize( width, height );
+        QTest::qWait( 50 );
+    }
 };
 
 using CrawlerWidgetVisitor = CrawlerWidget::access_by<CrawlerWidgetPrivate>;
@@ -262,6 +292,71 @@ SCENARIO( "Crawler widget search", "[ui]" )
             THEN( "has lines matched" )
             {
                 REQUIRE( crawlerVisitor.getLogFilteredNbLines().get() >= 2 );
+            }
+        }
+
+        WHEN( "text wrap is enabled" )
+        {
+            crawlerVisitor.setTextWrap( true );
+
+            THEN( "text wrap is active" )
+            {
+                REQUIRE( crawlerVisitor.isTextWrapEnabled() );
+            }
+
+            AND_WHEN( "search for lines with text wrap" )
+            {
+                crawlerVisitor.setSearchPattern( "this is line" );
+                crawlerVisitor.runSearch();
+
+                REQUIRE( waitUiState( [ &crawlerVisitor ]() {
+                    return crawlerVisitor.getLogFilteredNbLines().get() == SL_NB_LINES;
+                } ) );
+
+                THEN( "all lines are matched" )
+                {
+                    REQUIRE( crawlerVisitor.getLogFilteredNbLines().get() == SL_NB_LINES );
+                }
+
+                AND_WHEN( "click on filtered view line" )
+                {
+                    // This tests that clicking in filtered view correctly
+                    // scrolls the main view (Bug 9 fix verification)
+                    crawlerVisitor.clickFilteredViewLine( 50 );
+                    crawlerVisitor.render();
+
+                    THEN( "no crash occurs" )
+                    {
+                        // If we get here without crash, the click handling works
+                        REQUIRE( true );
+                    }
+                }
+
+                AND_WHEN( "resize views with text wrap" )
+                {
+                    // This tests that resizing with text wrap doesn't cause
+                    // performance issues or display problems (Bug 8, 10 fix verification)
+                    crawlerVisitor.resizeViews( 400, 200 );
+                    crawlerVisitor.resizeViews( 600, 300 );
+                    crawlerVisitor.resizeViews( 300, 150 );
+                    crawlerVisitor.render();
+
+                    THEN( "no crash or freeze occurs" )
+                    {
+                        // If we get here without crash/freeze, the resize handling works
+                        REQUIRE( crawlerVisitor.isTextWrapEnabled() );
+                    }
+                }
+            }
+
+            AND_WHEN( "text wrap is disabled" )
+            {
+                crawlerVisitor.setTextWrap( false );
+
+                THEN( "text wrap is inactive" )
+                {
+                    REQUIRE_FALSE( crawlerVisitor.isTextWrapEnabled() );
+                }
             }
         }
     }

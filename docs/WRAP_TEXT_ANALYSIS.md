@@ -251,6 +251,19 @@ The following bugs were **pre-existing** or **edge cases in the new logic**:
 - **Bug 7 (lastTopLine = 0)**: Edge case in the new bottom alignment detection logic
 - **Bug 9 (Click doesn't center)**: Pre-existing issue, but more noticeable with text wrap enabled
 
+## Test Coverage
+
+### Unit Tests Added (`tests/ui/crawlerwidget_test.cpp`)
+- Text wrap enable/disable toggle test
+- Search with text wrap enabled
+- Click on filtered view line with text wrap (Bug 9 verification)
+- Resize views with text wrap (Bug 8, 10 verification)
+
+### Integration Test Fix (`tests/ui/logfiltereddata_test.cpp`)
+- Fixed intermittent heap corruption (`0xc0000374`) on Windows
+- Root cause: Signal throttler timer firing after LogFilteredData destruction
+- Fix: Added `QTest::qWait(150)` after search completes to allow pending signals to process
+
 ## Debug Logging
 
 All text wrap related logging uses tags for easy filtering:

@@ -67,6 +67,11 @@ void runSearch( LogFilteredData* filtered_data, const QString& regexp,
         QList<QVariant> progressArgs = searchProgressSpy.last();
         progress = progressArgs.at( 1 ).toInt();
     } while ( progress < 100 );
+
+    // Wait a bit for any pending throttled signals to be processed.
+    // This prevents a use-after-free crash when LogFilteredData is destroyed
+    // while the searchProgressThrottler_ timer is still pending.
+    QTest::qWait( 150 );
 }
 
 } // namespace
