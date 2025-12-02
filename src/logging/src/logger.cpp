@@ -132,6 +132,15 @@ class Logger {
         return true;
     }
 
+    QString getLogFilePath() const
+    {
+        ScopedLock lock( mutex_ );
+        if ( logFile_ ) {
+            return logFile_->fileName();
+        }
+        return QString();
+    }
+
   private:
     Logger() = default;
 
@@ -206,6 +215,11 @@ void kloggConsoleMessageHandler( QtMsgType type, const QMessageLogContext& conte
 bool needLogging( QtMsgType type )
 {
     return Logger::instance().needLogging( type );
+}
+
+QString getLogFilePath()
+{
+    return Logger::instance().getLogFilePath();
 }
 
 } // namespace logging

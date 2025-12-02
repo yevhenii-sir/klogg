@@ -21,6 +21,7 @@
 #define KLOGG_LOGGER_H
 
 #include <cstdint>
+#include <QString>
 
 #include "log.h"
 
@@ -30,6 +31,7 @@ enum class LogLevel { None, Fatal, Error, Warning, Info, Debug };
 
 void enableLogging( bool enableLogging = true, LogLevel logLevel = LogLevel::Info);
 void enableFileLogging( bool enableLogging = true, LogLevel logLevel = LogLevel::Info);
+QString getLogFilePath();
 } // namespace logging
 
 #endif

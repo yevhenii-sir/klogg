@@ -276,12 +276,58 @@ else if ( useTextWrap_ && !followElasticHook_.isHooked()
 
 **Code Location**: `src/ui/src/abstractlogview.cpp` in `paintEvent()` function, after the `lastLineAligned_` check.
 
+### Bug 12: FilteredView Last Line Clipped When Follow File + Wrap Text Enabled
+
+**Symptoms**: When both "Follow file" and "Wrap text" are enabled, the last line in FilteredView may be partially clipped if it wraps to multiple visual lines.
+
+**Root Cause**: The "Auto bottom alignment" logic in `paintEvent()` only applies bottom alignment when `nearEndOfFile` is true. However, when `followMode_=true`, the view should always show the latest content at the bottom, regardless of whether we're technically "near the end" according to line numbers.
+
+**Example from logs**:
+```
+firstLine_=11002 lastLineAligned_=false useTextWrap_=true actual_height_=126 viewport=917x86 followMode_=true
+```
+Content height (126) exceeds viewport height (86), but `lastLineAligned_=false` and `nearEndOfFile` check may fail, causing bottom content to be clipped.
+
+**Fix**: Modified the "Auto bottom alignment" condition to also check `followMode_`:
+```cpp
+const bool shouldApplyBottomAlignment = nearEndOfFile || followMode_;
+```
+
+**Impact**: When follow mode is enabled, wrapped content in FilteredView will always be bottom-aligned, ensuring the last line is fully visible.
+
+**Code Location**: `src/ui/src/abstractlogview.cpp` in `paintEvent()` function, in the "Auto bottom alignment" block.
+
+### Bug 13: Shadow Incorrectly Rendered When FilteredView Height Adjusted
+
+**Symptoms**: When adjusting FilteredView height with text wrap enabled, the pull-to-follow bar (shadow) may be rendered at incorrect position, blocking text content.
+
+**Root Cause**: The `drawPullToFollowTopPosition` calculation uses `wholeHeight` (calculated from `getNbVisibleLines() * charHeight_`), which doesn't account for variable wrapped line heights. When text wrap is enabled, `actual_height_` may differ significantly from `wholeHeight`, causing the pull-to-follow bar to be positioned incorrectly.
+
+**Example**: 
+- `wholeHeight` = 500 (based on unwrapped line count)
+- `actual_height_` = 700 (wrapped content is taller)
+- Pull-to-follow bar positioned at `drawingTopPosition + wholeHeight` = incorrect position
+
+**Fix**: Calculate `effectiveHeight` at the start of `paintEvent()` and use it consistently for `drawPullToFollowTopPosition`:
+```cpp
+const int effectiveHeight = ( useTextWrap_ && textAreaCache_.actual_height_ > 0 ) 
+    ? textAreaCache_.actual_height_ 
+    : wholeHeight;
+int drawingPullToFollowTopPosition = drawingTopPosition + effectiveHeight;
+```
+
+**Impact**: Pull-to-follow bar is always positioned correctly relative to the actual drawn content height, preventing it from blocking text.
+
+**Code Location**: `src/ui/src/abstractlogview.cpp` in `paintEvent()` function, at the start of drawing position calculations.
+
 ## Regression Analysis
 
 The following bugs were **introduced by recent changes** (since commit 25c7de6d):
 - **Bug 8 (Performance)**: Added `getNbBottomWrappedVisibleLines()` call in `scrollContentsBy()` - MAJOR REGRESSION
 - **Bug 10 (State Lost)**: The resize handling logic was modified but didn't handle the edge case where `scrollContentsBy()` isn't triggered
 - **Bug 11 (Wrapped Content Exceeds Viewport)**: Edge case where wrapped content height exceeds viewport but `lastLineAligned_` is false, causing bottom content to be clipped
+- **Bug 12 (Follow + Wrap)**: Edge case where follow mode + text wrap combination doesn't trigger bottom alignment
+- **Bug 13 (Shadow Position)**: Pull-to-follow bar position calculation doesn't account for wrapped content height
 
 The following bugs were **pre-existing** or **edge cases in the new logic**:
 - **Bug 7 (lastTopLine = 0)**: Edge case in the new bottom alignment detection logic
@@ -295,6 +341,8 @@ The following bugs were **pre-existing** or **edge cases in the new logic**:
 - Click on filtered view line with text wrap (Bug 9 verification)
 - Resize views with text wrap (Bug 8, 10 verification)
 - Display file with wrapped content exceeding viewport (Bug 11 verification)
+- Follow mode + text wrap combination (Bug 12 verification)
+- Resize FilteredView height with text wrap (Bug 13 verification)
 
 ### Integration Test Fix (`tests/ui/logfiltereddata_test.cpp`)
 - Fixed intermittent heap corruption (`0xc0000374`) on Windows

@@ -899,6 +899,16 @@
             </item>
            </layout>
           </item>
+          <item>
+           <widget class="QLabel" name="logFilePathLabel">
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+            <property name="text">
+             <string/>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>

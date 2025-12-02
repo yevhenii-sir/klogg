@@ -1141,7 +1141,12 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
 
     QPainter devicePainter( viewport() );
     int drawingTopPosition = -pullToFollowHeight;
-    int drawingPullToFollowTopPosition = drawingTopPosition + wholeHeight;
+    
+    // Calculate effective height for text wrapping and pull-to-follow bar positioning
+    const int effectiveHeight = ( useTextWrap_ && textAreaCache_.actual_height_ > 0 ) 
+        ? textAreaCache_.actual_height_ 
+        : wholeHeight;
+    int drawingPullToFollowTopPosition = drawingTopPosition + effectiveHeight;
 
     // This is to cover the special case where there is less than a screenful
     // worth of data, we want to see the document from the top, rather than
@@ -1158,9 +1163,6 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
     else if ( lastLineAligned_ && !followElasticHook_.isHooked() ) {
         // Use actual drawn height when text wrapping is enabled to handle variable line heights
         // Ensure actual_height_ is valid (> 0) before using it; fall back to wholeHeight otherwise
-        const int effectiveHeight = ( useTextWrap_ && textAreaCache_.actual_height_ > 0 ) 
-            ? textAreaCache_.actual_height_ 
-            : wholeHeight;
         // Calculate offset to align bottom of content with bottom of viewport
         // If effectiveHeight <= viewport height, no negative offset needed (content fits)
         if ( effectiveHeight > viewport()->height() ) {
@@ -1180,15 +1182,18 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
     // we need to apply bottom alignment offset even if lastLineAligned_ is false.
     // This happens when wrapped content exceeds viewport but scroll position hasn't
     // triggered bottom alignment mode yet (e.g., firstLine_=0 with wrapped content).
+    // Bug fix 8: When followMode_ is enabled, always apply bottom alignment for wrapped content
+    // to ensure the last line is fully visible in FilteredView.
     else if ( useTextWrap_ && !followElasticHook_.isHooked()
               && textAreaCache_.actual_height_ > 0
               && textAreaCache_.actual_height_ > viewport()->height() ) {
-        // Check if we're displaying content near the end of the file
+        // Check if we're displaying content near the end of the file, or if follow mode is enabled
         const auto totalLines = logData_->getNbLine();
         const auto visibleLines = getNbVisibleLines();
         const bool nearEndOfFile = ( firstLine_.get() + visibleLines.get() ) >= totalLines.get();
+        const bool shouldApplyBottomAlignment = nearEndOfFile || followMode_;
 
-        if ( nearEndOfFile ) {
+        if ( shouldApplyBottomAlignment ) {
             // Apply bottom alignment offset to show the bottom of wrapped content
             drawingTopOffset_ = -( textAreaCache_.actual_height_ - viewport()->height() );
             LOG_DEBUG << "[TextWrap:Paint] Auto bottom alignment: actual_height_="
@@ -1196,16 +1201,21 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
                       << " viewportHeight=" << viewport()->height()
                       << " drawingTopOffset_=" << drawingTopOffset_
                       << " firstLine_=" << firstLine_.get()
-                      << " totalLines=" << totalLines.get();
+                      << " totalLines=" << totalLines.get()
+                      << " followMode_=" << followMode_;
             drawingTopPosition += drawingTopOffset_;
             drawingPullToFollowTopPosition = drawingTopPosition + textAreaCache_.actual_height_;
         }
         else {
             drawingTopOffset_ = -pullToFollowHeight;
+            // Update pull-to-follow position using effective height
+            drawingPullToFollowTopPosition = drawingTopPosition + effectiveHeight;
         }
     }
     else {
         drawingTopOffset_ = -pullToFollowHeight;
+        // Update pull-to-follow position using effective height
+        drawingPullToFollowTopPosition = drawingTopPosition + effectiveHeight;
     }
 
     devicePainter.drawPixmap( 0, drawingTopPosition, textAreaCache_.pixmap_ );

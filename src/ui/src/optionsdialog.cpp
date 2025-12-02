@@ -46,6 +46,7 @@
 #include "fontutils.h"
 #include "highlighteredit.h"
 #include "log.h"
+#include "logger.h"
 #include "mainwindow.h"
 #include "recentfiles.h"
 #include "savedsearches.h"
@@ -208,6 +209,22 @@ void OptionsDialog::setupSearchResultsCache()
 void OptionsDialog::setupLogging()
 {
     verbositySpinBox->setEnabled( loggingCheckBox->isChecked() );
+    
+    // Update log file path display
+    if ( loggingCheckBox->isChecked() ) {
+        const auto logFilePath = logging::getLogFilePath();
+        if ( !logFilePath.isEmpty() ) {
+            logFilePathLabel->setText( tr( "Log file: %1" ).arg( logFilePath ) );
+            logFilePathLabel->setVisible( true );
+        }
+        else {
+            logFilePathLabel->setText( tr( "Log file: Console output only" ) );
+            logFilePathLabel->setVisible( true );
+        }
+    }
+    else {
+        logFilePathLabel->setVisible( false );
+    }
 }
 
 void OptionsDialog::setupArchives()
@@ -354,6 +371,10 @@ void OptionsDialog::updateDialogFromConfig()
 
     loggingCheckBox->setChecked( config.enableLogging() );
     verbositySpinBox->setValue( config.loggingLevel() );
+    
+    // Apply logging settings to get log file path
+    logging::enableFileLogging( config.enableLogging(),
+                                static_cast<logging::LogLevel>( config.loggingLevel() ) );
 
     extractArchivesCheckBox->setChecked( config.extractArchives() );
     extractArchivesAlwaysCheckBox->setChecked( config.extractArchivesAlways() );
@@ -527,6 +548,13 @@ void OptionsDialog::updateConfigFromDialog()
     config.setMinimizeToTray( minimizeToTrayCheckBox->isChecked() );
     config.setEnableLogging( loggingCheckBox->isChecked() );
     config.setLoggingLevel( verbositySpinBox->value() );
+    
+    // Apply logging settings immediately
+    logging::enableFileLogging( config.enableLogging(),
+                                static_cast<logging::LogLevel>( config.loggingLevel() ) );
+    
+    // Update log file path display
+    setupLogging();
 
     config.setExtractArchives( extractArchivesCheckBox->isChecked() );
     config.setExtractArchivesAlways( extractArchivesAlwaysCheckBox->isChecked() );
