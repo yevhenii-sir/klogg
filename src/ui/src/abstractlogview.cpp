@@ -1176,6 +1176,34 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
         drawingTopPosition += drawingTopOffset_;
         drawingPullToFollowTopPosition = drawingTopPosition + effectiveHeight;
     }
+    // Bug fix: When text wrap is enabled and actual_height_ exceeds viewport height,
+    // we need to apply bottom alignment offset even if lastLineAligned_ is false.
+    // This happens when wrapped content exceeds viewport but scroll position hasn't
+    // triggered bottom alignment mode yet (e.g., firstLine_=0 with wrapped content).
+    else if ( useTextWrap_ && !followElasticHook_.isHooked()
+              && textAreaCache_.actual_height_ > 0
+              && textAreaCache_.actual_height_ > viewport()->height() ) {
+        // Check if we're displaying content near the end of the file
+        const auto totalLines = logData_->getNbLine();
+        const auto visibleLines = getNbVisibleLines();
+        const bool nearEndOfFile = ( firstLine_.get() + visibleLines.get() ) >= totalLines.get();
+
+        if ( nearEndOfFile ) {
+            // Apply bottom alignment offset to show the bottom of wrapped content
+            drawingTopOffset_ = -( textAreaCache_.actual_height_ - viewport()->height() );
+            LOG_DEBUG << "[TextWrap:Paint] Auto bottom alignment: actual_height_="
+                      << textAreaCache_.actual_height_
+                      << " viewportHeight=" << viewport()->height()
+                      << " drawingTopOffset_=" << drawingTopOffset_
+                      << " firstLine_=" << firstLine_.get()
+                      << " totalLines=" << totalLines.get();
+            drawingTopPosition += drawingTopOffset_;
+            drawingPullToFollowTopPosition = drawingTopPosition + textAreaCache_.actual_height_;
+        }
+        else {
+            drawingTopOffset_ = -pullToFollowHeight;
+        }
+    }
     else {
         drawingTopOffset_ = -pullToFollowHeight;
     }

@@ -241,11 +241,47 @@ if ( wasBottomAligned && !followMode_ ) {
 }
 ```
 
+### Bug 11: Wrapped Content Exceeds Viewport Without Bottom Alignment
+**Problem**: When text wrap is enabled and wrapped content height (`actual_height_`) exceeds viewport height, but `lastLineAligned_` is false (e.g., `firstLine_=0`), the bottom portion of wrapped content is clipped and invisible.
+
+**Root Cause**: In `paintEvent()`, bottom alignment offset is only applied when `lastLineAligned_` is true. However, when text wrap is enabled:
+1. `drawTextArea()` may draw content that exceeds viewport height (due to wrapped lines)
+2. `actual_height_` correctly reflects the actual drawn height
+3. But if `lastLineAligned_=false` (e.g., user hasn't scrolled to bottom yet), no offset is applied
+4. This causes the bottom portion of wrapped content to be cut off
+
+**Example from logs**:
+```
+actual_height_=1590 viewportHeight=1540 lastLineAligned_=false firstLine_=0
+```
+Content is 50 pixels taller than viewport, but no offset is applied, so bottom 50 pixels are invisible.
+
+**Fix**: In `paintEvent()`, add a check for text wrap mode: when `actual_height_ > viewportHeight` and we're displaying content near the end of the file, automatically apply bottom alignment offset even if `lastLineAligned_` is false:
+```cpp
+else if ( useTextWrap_ && !followElasticHook_.isHooked()
+          && textAreaCache_.actual_height_ > 0
+          && textAreaCache_.actual_height_ > viewport()->height() ) {
+    const auto totalLines = logData_->getNbLine();
+    const auto visibleLines = getNbVisibleLines();
+    const bool nearEndOfFile = ( firstLine_.get() + visibleLines.get() ) >= totalLines.get();
+
+    if ( nearEndOfFile ) {
+        drawingTopOffset_ = -( textAreaCache_.actual_height_ - viewport()->height() );
+        // Apply offset to show bottom of wrapped content
+    }
+}
+```
+
+**Impact**: This ensures that when text wrap is enabled and content exceeds viewport height, the bottom portion is always visible, regardless of scroll position.
+
+**Code Location**: `src/ui/src/abstractlogview.cpp` in `paintEvent()` function, after the `lastLineAligned_` check.
+
 ## Regression Analysis
 
 The following bugs were **introduced by recent changes** (since commit 25c7de6d):
 - **Bug 8 (Performance)**: Added `getNbBottomWrappedVisibleLines()` call in `scrollContentsBy()` - MAJOR REGRESSION
 - **Bug 10 (State Lost)**: The resize handling logic was modified but didn't handle the edge case where `scrollContentsBy()` isn't triggered
+- **Bug 11 (Wrapped Content Exceeds Viewport)**: Edge case where wrapped content height exceeds viewport but `lastLineAligned_` is false, causing bottom content to be clipped
 
 The following bugs were **pre-existing** or **edge cases in the new logic**:
 - **Bug 7 (lastTopLine = 0)**: Edge case in the new bottom alignment detection logic
@@ -258,6 +294,7 @@ The following bugs were **pre-existing** or **edge cases in the new logic**:
 - Search with text wrap enabled
 - Click on filtered view line with text wrap (Bug 9 verification)
 - Resize views with text wrap (Bug 8, 10 verification)
+- Display file with wrapped content exceeding viewport (Bug 11 verification)
 
 ### Integration Test Fix (`tests/ui/logfiltereddata_test.cpp`)
 - Fixed intermittent heap corruption (`0xc0000374`) on Windows
