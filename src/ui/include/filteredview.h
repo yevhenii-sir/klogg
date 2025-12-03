@@ -67,6 +67,10 @@ class FilteredView : public AbstractLogView
     LineNumber lineIndex( LineNumber lineNumber ) const override;
     LineNumber maxDisplayLineNumber() const override;
 
+    // In FilteredView, all visible lines are part of the filtered result,
+    // so search range graying should never be applied
+    bool shouldApplySearchRangeGraying() const override;
+
     void doRegisterShortcuts() override;
 
   private:

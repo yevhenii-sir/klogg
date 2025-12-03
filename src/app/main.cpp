@@ -169,6 +169,7 @@ int main( int argc, char* argv[] )
         app.sendFilesToPrimaryInstance( parameters.filenames );
     }
     else {
+        // Apply theme based on theme mode
         StyleManager::applyStyle( config.style() );
 
         auto startNewSession = true;

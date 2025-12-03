@@ -66,22 +66,48 @@ runs:
         cd $KLOGG_BUILD_ROOT
         # Clean up any leftover mounted volumes from previous runs
         if [ -d "/Volumes/klogg" ]; then
-            hdiutil detach "/Volumes/klogg" 2>/dev/null || true
+            hdiutil detach "/Volumes/klogg" -force 2>/dev/null || true
         fi
         # Remove any existing DMG files to avoid conflicts
         rm -f ./packages/*.dmg 2>/dev/null || true
+        # Run cpack - capture exit code but continue even if detach fails
+        set +e
         cpack --verbose -G "DragNDrop"
-        # Ensure DMG is properly detached after creation
+        CPACK_EXIT_CODE=$?
+        set -e
+        # Force detach any remaining mounted volumes (CPack may have failed to detach)
         if [ -d "/Volumes/klogg" ]; then
-            hdiutil detach "/Volumes/klogg" 2>/dev/null || true
+            hdiutil detach "/Volumes/klogg" -force 2>/dev/null || true
         fi
+        # Check if DMG was created successfully - if so, consider it success
+        # CPack may fail on detach but still create the DMG file
+        if [ -f "./packages/klogg-${{ env.KLOGG_VERSION }}-OSX.dmg" ]; then
+            echo "DMG created successfully: ./packages/klogg-${{ env.KLOGG_VERSION }}-OSX.dmg"
+            exit 0
+        else
+            echo "CPack failed and DMG was not created. Exit code: $CPACK_EXIT_CODE"
+            # Always exit with non-zero if DMG file doesn't exist, regardless of CPack exit code
+            # This ensures the build fails if DMG wasn't created, even if CPack returned 0
+            if [ "$CPACK_EXIT_CODE" -eq 0 ]; then
+                exit 1
+            else
+                exit $CPACK_EXIT_CODE
+            fi
+        fi
+
+    - name: Mac rename dmg with arch
+      shell: sh
+      run: |
+        cd $KLOGG_BUILD_ROOT
+        # Rename DMG to include architecture to avoid conflicts when multiple macOS builds upload
+        mv ./packages/klogg-${{ env.KLOGG_VERSION }}-OSX.dmg ./packages/${{ env.KLOGG_DMG }}
+        echo "Renamed DMG to: ${{ env.KLOGG_DMG }}"
 
     - name: Mac codesign dmg
       if: ${{ github.event_name != 'pull_request' && inputs.p12-file-base64 != '' }}
       shell: sh
       run: |
         cd $KLOGG_BUILD_ROOT
-        mv ./packages/klogg-${{ env.KLOGG_VERSION }}-OSX.dmg ./packages/${{ env.KLOGG_DMG }}
         codesign -v -f -o runtime --timestamp -s "${{ env.KLOGG_CODESIGN }}" ./packages/${{ env.KLOGG_DMG }}
     
     - name: Mac notarize DMG 

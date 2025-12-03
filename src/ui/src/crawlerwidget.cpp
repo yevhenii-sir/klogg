@@ -48,7 +48,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <chrono>
 
 #include <QAction>
 #include <QApplication>
@@ -383,6 +382,9 @@ void CrawlerWidget::startNewSearch()
         filteredView_ = new FilteredView( logFilteredData_.get(), quickFindPattern_.get() );
         filteredViewsData_[ filteredView_ ] = logFilteredData_;
 
+        // Reset context lines for new filtered data
+        logFilteredData_->setContextLines( 0, 0 );
+
         connectAllFilteredViewSlots( filteredView_ );
 
         auto index = tabbedFilteredView_->addTab( filteredView_, "" );
@@ -486,7 +488,11 @@ void CrawlerWidget::updateFilteredView( LinesCount nbMatches, int progress,
     searchInfoLine_->show();
 
     if ( progress == 100 ) {
-        // Searching done
+        // Searching done - apply context lines if mode is active
+        if ( contextLinesMode_ > 0 && contextLinesSpinBox_->value() > 0 ) {
+            applyContextLines();
+        }
+        
         printSearchInfoMessage( nbMatches );
         searchInfoLine_->hideGauge();
         // De-activate the stop button
@@ -548,6 +554,7 @@ void CrawlerWidget::jumpToMatchingLine( LineNumber filteredLineNb, LinesCount nL
                                         LineColumn startCol, LineLength nSymbols )
 {
     const auto mainViewLine = logFilteredData_->getMatchingLineNumber( filteredLineNb );
+
     logMainView_->selectPortionAndDisplayLine( mainViewLine, nLines, startCol,
                                                nSymbols ); // FIXME: should be done with a signal.
 }
@@ -1124,6 +1131,30 @@ void CrawlerWidget::setup()
 
     predefinedFilters_ = new PredefinedFiltersComboBox( this );
 
+    // Context lines controls
+    contextLinesSpinBox_ = new QSpinBox();
+    contextLinesSpinBox_->setMinimum( 0 );
+    contextLinesSpinBox_->setMaximum( 1000 );
+    contextLinesSpinBox_->setValue( 0 );
+    contextLinesSpinBox_->setToolTip( tr( "Number of context lines" ) );
+    contextLinesSpinBox_->setSizePolicy( QSizePolicy::Minimum, QSizePolicy::Minimum );
+    contextLinesSpinBox_->setMaximumWidth( 60 );
+
+    // Create combobox for context lines mode
+    contextLinesComboBox_ = new QComboBox();
+    contextLinesComboBox_->setToolTip( tr( "Context lines mode" ) );
+    contextLinesComboBox_->setSizePolicy( QSizePolicy::Fixed, QSizePolicy::Fixed );
+    contextLinesComboBox_->setContentsMargins( 2, 2, 2, 2 );
+
+    // Add items with user data for mode ID
+    contextLinesComboBox_->addItem( tr( "None" ), 0 );
+    contextLinesComboBox_->addItem( tr( "Before (-B)" ), 1 );
+    contextLinesComboBox_->addItem( tr( "After (-A)" ), 2 );
+    contextLinesComboBox_->addItem( tr( "Around (-C)" ), 3 );
+
+    // Set default to None
+    contextLinesComboBox_->setCurrentIndex( 0 );
+
     auto* searchLineLayout = new QHBoxLayout;
     searchLineLayout->setContentsMargins( 2, 2, 2, 2 );
 
@@ -1135,6 +1166,8 @@ void CrawlerWidget::setup()
     searchLineLayout->addWidget( searchRefreshButton_ );
     searchLineLayout->addWidget( predefinedFilters_ );
     searchLineLayout->addWidget( searchLineEdit_ );
+    searchLineLayout->addWidget( contextLinesSpinBox_ );
+    searchLineLayout->addWidget( contextLinesComboBox_ );
     searchLineLayout->addWidget( clearButton_ );
     searchLineLayout->addWidget( searchButton_ );
     searchLineLayout->addWidget( keepSearchResultsButton_ );
@@ -1199,6 +1232,14 @@ void CrawlerWidget::setup()
     connect( searchButton_, &QToolButton::clicked, this, &CrawlerWidget::startNewSearch );
     connect( stopButton_, &QToolButton::clicked, this, &CrawlerWidget::stopSearch );
     connect( clearButton_, &QToolButton::clicked, searchLineEdit_, &QComboBox::clearEditText );
+
+    // Context lines combo box
+    connect( contextLinesComboBox_, QOverload<int>::of( &QComboBox::currentIndexChanged ),
+             this, &CrawlerWidget::contextLinesModeChanged );
+    
+    // Also connect spinbox changes to update context lines if mode is active
+    connect( contextLinesSpinBox_, QOverload<int>::of( &QSpinBox::valueChanged ),
+             this, &CrawlerWidget::contextLinesValueChanged );
 
     connect( visibilityBox_, QOverload<int>::of( &QComboBox::currentIndexChanged ), this,
              &CrawlerWidget::changeFilteredViewVisibility );
@@ -1958,4 +1999,65 @@ QString CrawlerWidgetContext::toString() const
     properies[ "M" ] = toVariantList( marks_ );
 
     return QJsonDocument::fromVariant( properies ).toJson( QJsonDocument::Compact );
+}
+
+void CrawlerWidget::contextLinesModeChanged( int index )
+{
+    // Get mode from user data
+    const int mode = contextLinesComboBox_->itemData( index ).toInt();
+    contextLinesMode_ = mode;
+    
+    // Apply context lines if value is non-zero
+    if ( contextLinesSpinBox_->value() > 0 ) {
+        applyContextLines();
+    }
+    else {
+        // If value is 0, clear context lines
+        logFilteredData_->setContextLines( 0, 0 );
+        filteredView_->updateData();
+    }
+}
+
+void CrawlerWidget::contextLinesValueChanged( int value )
+{
+    // Apply context lines if mode is active
+    if ( contextLinesMode_ > 0 && value > 0 ) {
+        applyContextLines();
+    }
+    else {
+        // Clear context lines if value is 0 or no mode selected
+        logFilteredData_->setContextLines( 0, 0 );
+        // Note: We intentionally don't reset contextLinesMode_ here when value becomes 0,
+        // so that the user's selection (-A/-B/-C) persists for future value changes.
+        filteredView_->updateData();
+    }
+}
+
+void CrawlerWidget::applyContextLines()
+{
+    if ( !logFilteredData_ || contextLinesMode_ == 0 || contextLinesSpinBox_->value() == 0 ) {
+        return;
+    }
+    
+    const int n = contextLinesSpinBox_->value();
+    
+    // Apply context lines based on mode: 1 = before (-B), 2 = after (-A), 3 = both (-C)
+    switch ( contextLinesMode_ ) {
+        case 1: // -B
+            logFilteredData_->setContextLines( n, 0 );
+            break;
+        case 2: // -A
+            logFilteredData_->setContextLines( 0, n );
+            break;
+        case 3: // -C
+            logFilteredData_->setContextLines( n, n );
+            break;
+        default:
+            logFilteredData_->setContextLines( 0, 0 );
+            return;
+    }
+    
+    // Use updateData() instead of update() for better performance
+    // This triggers a full refresh but is more efficient than multiple updates
+    filteredView_->updateData();
 }

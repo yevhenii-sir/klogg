@@ -43,12 +43,14 @@
 #include <cstddef>
 #include <optional>
 
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QSplitter>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -269,6 +271,11 @@ class CrawlerWidget : public QSplitter,
     void changeFilteredView(int tabIndex);
     void closeFilteredView(int tabIndex);
     void filteredViewDestroyed(QObject* view);
+    
+    // Context lines handlers
+    void contextLinesModeChanged(int index);
+    void contextLinesValueChanged(int value);
+    void applyContextLines();
 
   private:
     // State machine holding the state of the search, used to allow/disallow
@@ -394,6 +401,13 @@ class CrawlerWidget : public QSplitter,
     QToolButton* inverseButton_;
     QToolButton* booleanButton_;
     QToolButton* searchRefreshButton_;
+
+    // Context lines controls
+    QSpinBox* contextLinesSpinBox_;
+    QComboBox* contextLinesComboBox_;
+    
+    // Context lines mode: 0 = none, 1 = before (-B), 2 = after (-A), 3 = both (-C)
+    int contextLinesMode_ = 0;
 
     std::map<QString, QShortcut*> shortcuts_;
 

@@ -48,6 +48,7 @@
 #include "log.h"
 #include "logger.h"
 #include "mainwindow.h"
+#include "openfilehelper.h"
 #include "recentfiles.h"
 #include "savedsearches.h"
 #include "shortcuts.h"
@@ -81,6 +82,7 @@ OptionsDialog::OptionsDialog( QWidget* parent )
     connect( searchResultsCacheCheckBox, &QCheckBox::toggled,
              [ this ]( auto ) { this->setupSearchResultsCache(); } );
     connect( loggingCheckBox, &QCheckBox::toggled, [ this ]( auto ) { this->setupLogging(); } );
+    connect( openLogFileButton, &QPushButton::clicked, this, &OptionsDialog::openLogFile );
 
     connect( extractArchivesCheckBox, &QCheckBox::toggled,
              [ this ]( auto ) { this->setupArchives(); } );
@@ -152,6 +154,11 @@ void OptionsDialog::setupRegexp()
 void OptionsDialog::setupStyles()
 {
     styleComboBox->addItems( StyleManager::availableStyles() );
+    
+    // Setup theme mode combo box
+    themeModeComboBox->addItem( tr( "Light" ), static_cast<int>( ThemeMode::Light ) );
+    themeModeComboBox->addItem( tr( "Dark" ), static_cast<int>( ThemeMode::Dark ) );
+    themeModeComboBox->addItem( tr( "Auto (Follow System)" ), static_cast<int>( ThemeMode::Auto ) );
 }
 
 void OptionsDialog::setupEncodings()
@@ -216,14 +223,26 @@ void OptionsDialog::setupLogging()
         if ( !logFilePath.isEmpty() ) {
             logFilePathLabel->setText( tr( "Log file: %1" ).arg( logFilePath ) );
             logFilePathLabel->setVisible( true );
+            openLogFileButton->setVisible( true );
+            openLogFileButton->setEnabled( true );
         }
         else {
             logFilePathLabel->setText( tr( "Log file: Console output only" ) );
             logFilePathLabel->setVisible( true );
+            openLogFileButton->setVisible( false );
         }
     }
     else {
         logFilePathLabel->setVisible( false );
+        openLogFileButton->setVisible( false );
+    }
+}
+
+void OptionsDialog::openLogFile()
+{
+    const auto logFilePath = logging::getLogFilePath();
+    if ( !logFilePath.isEmpty() ) {
+        showPathInFileExplorer( logFilePath );
     }
 }
 
@@ -337,6 +356,16 @@ void OptionsDialog::updateDialogFromConfig()
         styleComboBox->setCurrentText( style );
     }
 
+    // Theme mode
+    const auto themeMode = config.themeMode();
+    const int themeModeIndex = themeModeComboBox->findData( static_cast<int>( themeMode ) );
+    if ( themeModeIndex != -1 ) {
+        themeModeComboBox->setCurrentIndex( themeModeIndex );
+    }
+    else {
+        themeModeComboBox->setCurrentIndex( 2 ); // Default to Auto
+    }
+
     hideAnsiColorsCheckBox->setChecked( config.hideAnsiColorSequences() );
 
     // Regexp types
@@ -375,6 +404,9 @@ void OptionsDialog::updateDialogFromConfig()
     // Apply logging settings to get log file path
     logging::enableFileLogging( config.enableLogging(),
                                 static_cast<logging::LogLevel>( config.loggingLevel() ) );
+    
+    // Update log file path display immediately
+    setupLogging();
 
     extractArchivesCheckBox->setChecked( config.extractArchives() );
     extractArchivesAlwaysCheckBox->setChecked( config.extractArchivesAlways() );
@@ -576,6 +608,17 @@ void OptionsDialog::updateConfigFromDialog()
     restartAppMessage = config.style() != styleComboBox->currentText();
 
     config.setStyle( styleComboBox->currentText() );
+    
+    // Theme mode
+    const auto themeMode = static_cast<ThemeMode>( themeModeComboBox->currentData().toInt() );
+    const bool themeModeChanged = config.themeMode() != themeMode;
+    config.setThemeMode( themeMode );
+    
+    // Apply theme immediately if changed
+    if ( themeModeChanged ) {
+        StyleManager::applyStyle( config.style() );
+    }
+    
     config.setHideAnsiColorSequences( hideAnsiColorsCheckBox->isChecked() );
 
     config.setDefaultEncodingMib( encodingComboBox->currentData().toInt() );

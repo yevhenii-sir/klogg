@@ -341,6 +341,27 @@
            </property>
            <layout class="QVBoxLayout" name="verticalLayout_15">
             <item>
+             <layout class="QHBoxLayout" name="horizontalLayout_theme">
+              <item>
+               <widget class="QLabel" name="themeModeLabel">
+                <property name="text">
+                 <string>Theme:</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QComboBox" name="themeModeComboBox">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </item>
+            <item>
              <widget class="QComboBox" name="styleComboBox"/>
             </item>
            </layout>
@@ -900,14 +921,31 @@
            </layout>
           </item>
           <item>
-           <widget class="QLabel" name="logFilePathLabel">
-            <property name="wordWrap">
-             <bool>true</bool>
-            </property>
-            <property name="text">
-             <string/>
-            </property>
-           </widget>
+           <layout class="QHBoxLayout" name="horizontalLayout_logPath">
+            <item>
+             <widget class="QLabel" name="logFilePathLabel">
+              <property name="wordWrap">
+               <bool>true</bool>
+              </property>
+              <property name="textInteractionFlags">
+               <set>Qt::TextSelectableByMouse|Qt::TextSelectableByKeyboard</set>
+              </property>
+              <property name="text">
+               <string/>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="openLogFileButton">
+              <property name="text">
+               <string>Open</string>
+              </property>
+              <property name="toolTip">
+               <string>Open log file in file manager</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
           </item>
          </layout>
         </widget>

@@ -55,9 +55,9 @@ set(KLOGG_UI_SOURCES
 set(KLOGG_GREP_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/klogg_grep.cpp)
 
 set(MAIN_LIBS
-    klogg_logdata
-    klogg_crash_handler
-    roaring
+    # klogg_logdata removed - provided by klogg_ui
+    # klogg_crash_handler removed - provided by klogg_logdata (transitive)
+    # roaring removed - provided by klogg_logdata (transitive)
     kdsingleapp
 )
 
@@ -86,7 +86,9 @@ endif()
 
 target_link_libraries(klogg PUBLIC ${MAIN_LIBS} klogg_ui)
 target_link_libraries(klogg_portable PUBLIC ${MAIN_LIBS} klogg_ui)
-target_link_libraries(klogg_grep PUBLIC ${MAIN_LIBS})
+# klogg_grep is a CLI tool (no UI) but it still relies on core log processing code.
+# It must link klogg_logdata to get required dependencies (including mimalloc headers/libs).
+target_link_libraries(klogg_grep PUBLIC ${MAIN_LIBS} klogg_logdata)
 
 target_compile_definitions(klogg_portable PUBLIC -DKLOGG_PORTABLE)
 

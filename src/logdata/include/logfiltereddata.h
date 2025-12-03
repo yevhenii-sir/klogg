@@ -72,6 +72,7 @@ class LogFilteredData : public AbstractLogData {
   public:
     // Constructor used by LogData
     explicit LogFilteredData( const LogData* logData );
+    ~LogFilteredData();
 
     // Starts the async search, sending newDataAvailable() when new data found.
     // If a search is already in progress this function will block until
@@ -136,6 +137,11 @@ class LogFilteredData : public AbstractLogData {
     void setVisibility( Visibility visibility );
     Visibility visibility() const;
 
+    // Context lines support (similar to grep -A -B -C)
+    void setContextLines( int before, int after );
+    int contextLinesBefore() const { return contextLinesBefore_; }
+    int contextLinesAfter() const { return contextLinesAfter_; }
+
     void iterateOverLines( const std::function<void( LineNumber )>& callback ) const;
   Q_SIGNALS:
     // Sent when the search has progressed, give the number of matches (so far)
@@ -174,6 +180,10 @@ class LogFilteredData : public AbstractLogData {
     // Returns wheither the passed line has a mark on it.
     bool isLineMarked( LineNumber line ) const;
 
+    // Build list of lines including context lines
+    // Returns a vector of line numbers in display order (with context lines)
+    void rebuildContextLinesList() const;
+
     // List of the matching line numbers
     SearchResultArray matching_lines_;
     SearchResultArray marks_;
@@ -188,6 +198,14 @@ class LogFilteredData : public AbstractLogData {
     LinesCount nbLinesProcessed_;
 
     Visibility visibility_;
+
+    // Context lines configuration
+    int contextLinesBefore_ = 0;
+    int contextLinesAfter_ = 0;
+
+    // Cached list of line numbers including context lines (mutable for lazy evaluation)
+    mutable klogg::vector<LineNumber> contextLinesList_;
+    mutable bool contextLinesListValid_ = false;
 
     LogFilteredDataWorker workerThread_;
 

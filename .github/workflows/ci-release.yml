@@ -40,11 +40,31 @@ jobs:
     - name: Decompress debug symbols
       shell: sh
       run: |
-        xz -d ./packages-focal/klogg_focal.debug.xz
-        xz -d ./packages-jammy/klogg_jammy.debug.xz
-        xz -d ./packages-noble/klogg_noble.debug.xz
-        xz -d ./packages-oracle/klogg_oracle.debug.xz
-        xz -d ./packages-appimage/klogg_appimage.debug.xz
+        if [ -f ./packages-focal/klogg_focal.debug.xz ]; then
+          xz -d ./packages-focal/klogg_focal.debug.xz
+        else
+          echo "Warning: ./packages-focal/klogg_focal.debug.xz not found, skipping"
+        fi
+        if [ -f ./packages-jammy/klogg_jammy.debug.xz ]; then
+          xz -d ./packages-jammy/klogg_jammy.debug.xz
+        else
+          echo "Warning: ./packages-jammy/klogg_jammy.debug.xz not found, skipping"
+        fi
+        if [ -f ./packages-noble/klogg_noble.debug.xz ]; then
+          xz -d ./packages-noble/klogg_noble.debug.xz
+        else
+          echo "Warning: ./packages-noble/klogg_noble.debug.xz not found, skipping"
+        fi
+        if [ -f ./packages-oracle/klogg_oracle.debug.xz ]; then
+          xz -d ./packages-oracle/klogg_oracle.debug.xz
+        else
+          echo "Warning: ./packages-oracle/klogg_oracle.debug.xz not found, skipping"
+        fi
+        if [ -f ./packages-appimage/klogg_appimage.debug.xz ]; then
+          xz -d ./packages-appimage/klogg_appimage.debug.xz
+        else
+          echo "Warning: ./packages-appimage/klogg_appimage.debug.xz not found, skipping"
+        fi
 
     - name: Setup Sentry CLI
       if: env.SENTRY_TOKEN != ''
@@ -67,11 +87,31 @@ jobs:
       if: env.SENTRY_TOKEN != ''
       shell: sh
       run: |
-        sentry-cli upload-dif ./packages-focal/klogg_focal.debug ./packages-focal/klogg_focal
-        sentry-cli upload-dif ./packages-jammy/klogg_jammy.debug ./packages-jammy/klogg_jammy
-        sentry-cli upload-dif ./packages-noble/klogg_noble.debug  ./packages-noble/klogg_noble
-        sentry-cli upload-dif ./packages-oracle/klogg_oracle.debug ./packages-oracle/klogg_oracle
-        sentry-cli upload-dif ./packages-appimage/klogg_appimage.debug  ./packages-appimage/klogg_appimage
+        if [ -f ./packages-focal/klogg_focal.debug ] && [ -f ./packages-focal/klogg_focal ]; then
+          sentry-cli upload-dif ./packages-focal/klogg_focal.debug ./packages-focal/klogg_focal
+        else
+          echo "Warning: ./packages-focal debug files not found, skipping"
+        fi
+        if [ -f ./packages-jammy/klogg_jammy.debug ] && [ -f ./packages-jammy/klogg_jammy ]; then
+          sentry-cli upload-dif ./packages-jammy/klogg_jammy.debug ./packages-jammy/klogg_jammy
+        else
+          echo "Warning: ./packages-jammy debug files not found, skipping"
+        fi
+        if [ -f ./packages-noble/klogg_noble.debug ] && [ -f ./packages-noble/klogg_noble ]; then
+          sentry-cli upload-dif ./packages-noble/klogg_noble.debug  ./packages-noble/klogg_noble
+        else
+          echo "Warning: ./packages-noble debug files not found, skipping"
+        fi
+        if [ -f ./packages-oracle/klogg_oracle.debug ] && [ -f ./packages-oracle/klogg_oracle ]; then
+          sentry-cli upload-dif ./packages-oracle/klogg_oracle.debug ./packages-oracle/klogg_oracle
+        else
+          echo "Warning: ./packages-oracle debug files not found, skipping"
+        fi
+        if [ -f ./packages-appimage/klogg_appimage.debug ] && [ -f ./packages-appimage/klogg_appimage ]; then
+          sentry-cli upload-dif ./packages-appimage/klogg_appimage.debug  ./packages-appimage/klogg_appimage
+        else
+          echo "Warning: ./packages-appimage debug files not found, skipping"
+        fi
 
     - name: Upload symbols mac
       if: env.SENTRY_TOKEN != ''
@@ -109,14 +149,28 @@ jobs:
         if [ -d ./packages-macos-arm-qt6/klogg-arm64.app ]; then
           rm -rf ./packages-macos-arm-qt6/klogg-arm64.app
         fi
-        mkdir ./linux-debug
-        mv ./packages-focal/klogg_focal.debug ./linux-debug
-        mv ./packages-jammy/klogg_jammy.debug ./linux-debug
-        mv ./packages-noble/klogg_noble.debug ./linux-debug
-        mv ./packages-oracle/klogg_oracle.debug ./linux-debug
-        mv ./packages-appimage/klogg_appimage.debug ./linux-debug
-        tar -cJf ./linux-debug/klogg-$KLOGG_VERSION-symbols.tar.xz ./linux-debug/*
-        rm ./linux-debug/*.debug
+        mkdir -p ./linux-debug
+        if [ -f ./packages-focal/klogg_focal.debug ]; then
+          mv ./packages-focal/klogg_focal.debug ./linux-debug
+        fi
+        if [ -f ./packages-jammy/klogg_jammy.debug ]; then
+          mv ./packages-jammy/klogg_jammy.debug ./linux-debug
+        fi
+        if [ -f ./packages-noble/klogg_noble.debug ]; then
+          mv ./packages-noble/klogg_noble.debug ./linux-debug
+        fi
+        if [ -f ./packages-oracle/klogg_oracle.debug ]; then
+          mv ./packages-oracle/klogg_oracle.debug ./linux-debug
+        fi
+        if [ -f ./packages-appimage/klogg_appimage.debug ]; then
+          mv ./packages-appimage/klogg_appimage.debug ./linux-debug
+        fi
+        if [ -n "$(ls -A ./linux-debug/*.debug 2>/dev/null)" ]; then
+          tar -cJf ./linux-debug/klogg-$KLOGG_VERSION-symbols.tar.xz ./linux-debug/*.debug
+          rm ./linux-debug/*.debug
+        else
+          echo "Warning: No debug files found, skipping symbols archive creation"
+        fi
 
     - name: Prepare binary artifacts
       shell: sh
@@ -129,27 +183,56 @@ jobs:
     - name: Prepare checksums
       shell: sh
       run: |
-        sha256sum --binary ./packages-bin/* ./packages-focal/* ./packages-jammy/* ./packages-noble/* ./packages-oracle/* ./packages-appimage/*  > ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt
+        sha256sum --binary ./packages-bin/* > ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
+        if [ -d ./packages-focal ] && [ -n "$(ls -A ./packages-focal/* 2>/dev/null)" ]; then
+          sha256sum --binary ./packages-focal/* >> ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
+        fi
+        if [ -d ./packages-jammy ] && [ -n "$(ls -A ./packages-jammy/* 2>/dev/null)" ]; then
+          sha256sum --binary ./packages-jammy/* >> ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
+        fi
+        if [ -d ./packages-noble ] && [ -n "$(ls -A ./packages-noble/* 2>/dev/null)" ]; then
+          sha256sum --binary ./packages-noble/* >> ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
+        fi
+        if [ -d ./packages-oracle ] && [ -n "$(ls -A ./packages-oracle/* 2>/dev/null)" ]; then
+          sha256sum --binary ./packages-oracle/* >> ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
+        fi
+        if [ -d ./packages-appimage ] && [ -n "$(ls -A ./packages-appimage/* 2>/dev/null)" ]; then
+          sha256sum --binary ./packages-appimage/* >> ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
+        fi
         
-    - name: Release win
+    - name: Create GitHub Release
       if: env.GITHUB_TOKEN != ''
-      uses: "marvinpinto/action-automatic-releases@latest"
+      uses: softprops/action-gh-release@v1
       with:
-        repo_token: ${{ secrets.KLOGG_GITHUB_TOKEN }}
-        automatic_release_tag: continuous-win
-        prerelease: true
+        token: ${{ secrets.KLOGG_GITHUB_TOKEN }}
+        tag_name: v${{ env.KLOGG_VERSION }}
+        name: Release v${{ env.KLOGG_VERSION }}
+        body: |
+          Release v${{ env.KLOGG_VERSION }}
+          
+          ## Downloads
+          - **Windows**: See [Windows packages](#windows)
+          - **Linux**: See [Linux packages](#linux)
+          - **macOS**: See [macOS packages](#macos)
+          
+          ## Windows {#windows}
+          - Windows x64 (Qt 6): `klogg-${{ env.KLOGG_VERSION }}-x64-Qt6.exe`
+          - Windows x86 (Qt 5): `klogg-${{ env.KLOGG_VERSION }}-x86-Qt5.exe`
+          
+          ## Linux {#linux}
+          - Ubuntu 20.04 (Focal): `klogg-${{ env.KLOGG_VERSION }}-focal.deb`
+          - Ubuntu 22.04 (Jammy): `klogg-${{ env.KLOGG_VERSION }}-jammy.deb`
+          - Ubuntu 24.04 (Noble): `klogg-${{ env.KLOGG_VERSION }}-noble.deb`
+          - Oracle Linux 8: `klogg-${{ env.KLOGG_VERSION }}-oracle.rpm`
+          - AppImage: `klogg-${{ env.KLOGG_VERSION }}-appimage.AppImage`
+          
+          ## macOS {#macos}
+          - Intel (x64): `klogg-${{ env.KLOGG_VERSION }}-mac-x64.dmg`
+          - Apple Silicon (ARM64): `klogg-${{ env.KLOGG_VERSION }}-mac-arm64.dmg`
+        prerelease: false
         files: |
           ./packages-windows-x86-qt5/*
           ./packages-windows-x64-qt6/*
-
-    - name: Release linux
-      if: env.GITHUB_TOKEN != ''
-      uses: "marvinpinto/action-automatic-releases@latest"
-      with:
-        repo_token: ${{ secrets.KLOGG_GITHUB_TOKEN }}
-        automatic_release_tag: continuous-linux
-        prerelease: true
-        files: |
           ./packages-focal/*
           ./packages-jammy/*
           ./packages-noble/*
@@ -157,26 +240,17 @@ jobs:
           ./packages-appimage/*
           ./packages-bin/*
           ./linux-debug/*
-
-    - name: Release mac
-      if: env.GITHUB_TOKEN != '' && (hashFiles('./packages-macos-intel-qt6/*') != '' || hashFiles('./packages-macos-arm-qt6/*') != '')
-      uses: "marvinpinto/action-automatic-releases@latest"
-      with:
-        repo_token: ${{ secrets.KLOGG_GITHUB_TOKEN }}
-        automatic_release_tag: continuous-osx
-        prerelease: true
-        files: |
-          ./packages-macos-intel-qt6/*
-          ./packages-macos-arm-qt6/*
+          ./packages-macos-intel-qt6/*.dmg
+          ./packages-macos-arm-qt6/*.dmg
 
     - name: Discord notification
       if: env.DISCORD_NEW_VERSIONS_WEBHOOK != ''
       env:
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_NEW_VERSIONS_WEBHOOK }}
-        DISCORD_EMBEDS: '[{"title": "Windows", "url": "https://github.com/ZEACENT/klogg/releases/tag/continuous-win"}, {"title": "Linux", "url": "https://github.com/ZEACENT/klogg/releases/tag/continuous-linux"}, {"title": "Mac", "url": "https://github.com/ZEACENT/klogg/releases/tag/continuous-osx"}]'
+        DISCORD_EMBEDS: '[{"title": "Release v${{ env.KLOGG_VERSION }}", "url": "https://github.com/ZEACENT/klogg/releases/tag/v${{ env.KLOGG_VERSION }}"}]'
       uses: Ilshidur/action-discord@master
       with:
-        args: 'New CI build {{KLOGG_VERSION}} has been released!'
+        args: 'New release v${{ env.KLOGG_VERSION }} has been published!'
 
 
 

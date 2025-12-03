@@ -45,6 +45,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -1026,13 +1027,8 @@ double AbstractLogView::verticalScrollMultiplicator() const
                      / static_cast<double>( logData_->getNbLine().get() );
 }
 
-void AbstractLogView::scrollContentsBy( int dx, int dy )
+void AbstractLogView::scrollContentsBy( int dx, int /*dy*/ )
 {
-    LOG_DEBUG << "[TextWrap:Scroll] scrollContentsBy received dy=" << dy 
-              << " scrollValue=" << verticalScrollBar()->value()
-              << " scrollMax=" << verticalScrollBar()->maximum()
-              << " useTextWrap=" << useTextWrap_;
-
     const auto scrollValue = verticalScrollBar()->value();
     const auto scrollMax = verticalScrollBar()->maximum();
     const auto scrollPosition = verticalScrollToLineNumber( scrollValue );
@@ -1042,12 +1038,8 @@ void AbstractLogView::scrollContentsBy( int dx, int dy )
     // The scroll range is already calculated correctly by updateScrollBars().
     const bool atBottom = ( scrollMax > 0 ) ? ( scrollValue >= scrollMax ) : true;
 
-    LOG_DEBUG << "[TextWrap:Scroll] scrollPosition=" << scrollPosition.get()
-              << " atBottom=" << atBottom;
-
     if ( atBottom ) {
         // We're at or past the bottom, lock the last line at the bottom
-        LOG_DEBUG << "[TextWrap:Scroll] Entering bottom alignment mode";
         // For text wrap mode, use the scroll maximum as the firstLine anchor.
         // scrollMax represents the last valid top line (totalLines - unwrappedLinesAtBottom).
         firstLine_ = verticalScrollToLineNumber( scrollMax );
@@ -1079,12 +1071,6 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
     const QRect invalidRect = paintEvent->rect();
     if ( ( invalidRect.isEmpty() ) || ( logData_ == nullptr ) )
         return;
-
-    LOG_DEBUG << "[TextWrap:Paint] paintEvent received, firstLine_=" << firstLine_
-              << " lastLineAligned_=" << lastLineAligned_ 
-              << " useTextWrap_=" << useTextWrap_
-              << " actual_height_=" << textAreaCache_.actual_height_
-              << " viewport=" << viewport()->width() << "x" << viewport()->height();
 
 #ifdef GLOGG_PERF_MEASURE_FPS
     static uint32_t maxline = logData_->getNbLine();
@@ -1122,6 +1108,18 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
     else {
         // Use the cache as is: nothing to do!
     }
+    
+    // Handle deferred scrollbar update after drawing is complete
+    // This avoids reentrancy issues from calling updateScrollBars() during drawTextArea()
+    // Use QMetaObject::invokeMethod to defer the call until after paintEvent() completes
+    // This prevents infinite loops and works correctly in test environments
+    if ( pendingScrollBarUpdate_ ) {
+        pendingScrollBarUpdate_ = false;
+        LOG_DEBUG << "[TextWrap:Paint] Scheduling deferred scrollbar update after paintEvent()";
+        // Defer the call using Qt::QueuedConnection to execute after paintEvent() completes
+        // This prevents reentrancy and ensures the call happens when it's safe
+        QMetaObject::invokeMethod( this, "updateScrollBars", Qt::QueuedConnection );
+    }
 
     // Height including the potentially invisible last line
     const auto wholeHeight = static_cast<int>( getNbVisibleLines().get() ) * charHeight_;
@@ -1146,7 +1144,9 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
     const int effectiveHeight = ( useTextWrap_ && textAreaCache_.actual_height_ > 0 ) 
         ? textAreaCache_.actual_height_ 
         : wholeHeight;
-    int drawingPullToFollowTopPosition = drawingTopPosition + effectiveHeight;
+    // Keep pull-to-follow within viewport to avoid blank/gray regions.
+    int drawingPullToFollowTopPosition
+        = std::min( drawingTopPosition + effectiveHeight, viewport()->height() );
 
     // This is to cover the special case where there is less than a screenful
     // worth of data, we want to see the document from the top, rather than
@@ -1156,7 +1156,8 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
         drawingTopOffset_ = 0;
         drawingTopPosition += ( wholeHeight - viewport()->height() ) + PullToFollowHookedHeight;
         drawingPullToFollowTopPosition
-            = drawingTopPosition + viewport()->height() - PullToFollowHookedHeight;
+            = std::min( drawingTopPosition + viewport()->height() - PullToFollowHookedHeight,
+                        viewport()->height() );
     }
     // This is the case where the user is on the 'extra' slot at the end
     // and is aligned on the last line (but no elastic shown)
@@ -1172,11 +1173,15 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
             // Content fits in viewport - no shift needed, but we're still "bottom aligned"
             drawingTopOffset_ = 0;
         }
-        LOG_DEBUG << "[TextWrap:Paint] Bottom alignment: effectiveHeight=" << effectiveHeight
-                  << " viewportHeight=" << viewport()->height()
-                  << " drawingTopOffset_=" << drawingTopOffset_;
         drawingTopPosition += drawingTopOffset_;
-        drawingPullToFollowTopPosition = drawingTopPosition + effectiveHeight;
+        // Use actual_height_ for pull-to-follow position when text wrapping is enabled
+        // to ensure shadow is positioned correctly relative to wrapped content
+        // effectiveHeight may be stale (calculated before drawTextArea() updates actual_height_)
+        const int heightForPullToFollow = ( useTextWrap_ && textAreaCache_.actual_height_ > 0 )
+            ? textAreaCache_.actual_height_
+            : effectiveHeight;
+        drawingPullToFollowTopPosition
+            = std::min( drawingTopPosition + heightForPullToFollow, viewport()->height() );
     }
     // Bug fix: When text wrap is enabled and actual_height_ exceeds viewport height,
     // we need to apply bottom alignment offset even if lastLineAligned_ is false.
@@ -1187,35 +1192,33 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
     else if ( useTextWrap_ && !followElasticHook_.isHooked()
               && textAreaCache_.actual_height_ > 0
               && textAreaCache_.actual_height_ > viewport()->height() ) {
-        // Check if we're displaying content near the end of the file, or if follow mode is enabled
-        const auto totalLines = logData_->getNbLine();
-        const auto visibleLines = getNbVisibleLines();
-        const bool nearEndOfFile = ( firstLine_.get() + visibleLines.get() ) >= totalLines.get();
-        const bool shouldApplyBottomAlignment = nearEndOfFile || followMode_;
+        // Only auto bottom-align when we are actually at the bottom of the scroll range.
+        // "Near end of file" based on logical line counts is not reliable in wrap mode and can
+        // incorrectly hide the requested line after jump-to-selection (click in FilteredView).
+        const auto scrollValue = verticalScrollBar()->value();
+        const auto scrollMax = verticalScrollBar()->maximum();
+        const bool atScrollBottom = ( scrollValue >= scrollMax );
+        const bool shouldApplyBottomAlignment = followMode_ || lastLineAligned_ || atScrollBottom;
 
         if ( shouldApplyBottomAlignment ) {
             // Apply bottom alignment offset to show the bottom of wrapped content
             drawingTopOffset_ = -( textAreaCache_.actual_height_ - viewport()->height() );
-            LOG_DEBUG << "[TextWrap:Paint] Auto bottom alignment: actual_height_="
-                      << textAreaCache_.actual_height_
-                      << " viewportHeight=" << viewport()->height()
-                      << " drawingTopOffset_=" << drawingTopOffset_
-                      << " firstLine_=" << firstLine_.get()
-                      << " totalLines=" << totalLines.get()
-                      << " followMode_=" << followMode_;
             drawingTopPosition += drawingTopOffset_;
-            drawingPullToFollowTopPosition = drawingTopPosition + textAreaCache_.actual_height_;
+            drawingPullToFollowTopPosition
+                = std::min( drawingTopPosition + textAreaCache_.actual_height_, viewport()->height() );
         }
         else {
             drawingTopOffset_ = -pullToFollowHeight;
             // Update pull-to-follow position using effective height
-            drawingPullToFollowTopPosition = drawingTopPosition + effectiveHeight;
+            drawingPullToFollowTopPosition
+                = std::min( drawingTopPosition + effectiveHeight, viewport()->height() );
         }
     }
     else {
         drawingTopOffset_ = -pullToFollowHeight;
         // Update pull-to-follow position using effective height
-        drawingPullToFollowTopPosition = drawingTopPosition + effectiveHeight;
+        drawingPullToFollowTopPosition
+            = std::min( drawingTopPosition + effectiveHeight, viewport()->height() );
     }
 
     devicePainter.drawPixmap( 0, drawingTopPosition, textAreaCache_.pixmap_ );
@@ -1247,6 +1250,13 @@ LineNumber AbstractLogView::lineIndex( LineNumber lineNumber ) const
 LineNumber AbstractLogView::maxDisplayLineNumber() const
 {
     return LineNumber( logData_->getNbLine().get() );
+}
+
+bool AbstractLogView::shouldApplySearchRangeGraying() const
+{
+    // By default, apply search range graying (for LogMainView)
+    // FilteredView overrides this to return false
+    return true;
 }
 
 void AbstractLogView::setOverview( Overview* overview, OverviewWidget* overviewWidget )
@@ -1369,7 +1379,27 @@ void AbstractLogView::textWrapSet( bool checked )
     // Reset bottom alignment state when toggling text wrap
     // The scroll position and alignment will be recalculated by updateScrollBars
     lastLineAligned_ = false;
+    textAreaCache_.invalid_ = true;
     textAreaCache_.actual_height_ = 0;
+    wrappedLinesInfo_.clear();
+
+    // The cached pixmap size is mode-dependent:
+    // - In wrap mode, the correct height depends on wrapped layout; force re-allocation in drawTextArea().
+    // - In non-wrap mode, we can allocate the exact visible height.
+    if ( useTextWrap_ ) {
+        textAreaCache_.pixmap_ = QPixmap{};
+    }
+    else {
+        textAreaCache_.pixmap_ = QPixmap{
+            static_cast<int>( std::ceil( viewport()->width() * viewport()->devicePixelRatio() ) ),
+            static_cast<int>( std::ceil( static_cast<int>( getNbVisibleLines().get() ) * charHeight_
+                                         * viewport()->devicePixelRatio() ) )
+        };
+        textAreaCache_.pixmap_.setDevicePixelRatio( viewport()->devicePixelRatio() );
+    }
+
+    // Invalidate cached column count - text wrap may affect column calculations
+    cachedVisibleColsValid_ = false;
     
     updateScrollBars();
     
@@ -1680,6 +1710,10 @@ void AbstractLogView::updateData()
     // Crop selection if it become out of range
     selection_.crop( lastLineNumber - 1_lcount );
 
+    // Invalidate cached column count - file size change affects nbDigitsInLineNumber
+    // which affects leftMarginPx_ in drawTextArea()
+    cachedVisibleColsValid_ = false;
+
     // Adapt the scroll bars to the new content
     updateScrollBars();
 
@@ -1703,6 +1737,8 @@ void AbstractLogView::updateFont( const QFont& font )
 {
     setFont( font );
     pixmapFontMetrics_ = pixmapFontMetrics( font );
+    // Invalidate cached column count - font change affects charWidth_
+    cachedVisibleColsValid_ = false;
     updateDisplaySize();
     update();
 }
@@ -1712,6 +1748,9 @@ void AbstractLogView::updateDisplaySize()
     // Font is assumed to be mono-space (is restricted by options dialog)
     charHeight_ = std::max( pixmapFontMetrics_.height(), 1 );
     charWidth_ = textWidth( pixmapFontMetrics_, QString( "m" ) );
+    
+    // Invalidate cached column count - will be recalculated on next getNbVisibleCols() call
+    cachedVisibleColsValid_ = false;
 
     LOG_DEBUG << "[TextWrap:Resize] updateDisplaySize called"
               << " viewport=" << viewport()->width() << "x" << viewport()->height()
@@ -1828,20 +1867,39 @@ void AbstractLogView::jumpToLine( LineNumber line )
     // we use a smaller offset (divide by 4 instead of 2) to ensure the line
     // is actually visible in the upper portion of the viewport.
     const LinesCount::UnderlyingType divisor = useTextWrap_ ? 4 : 2;
-    const auto newTopLine = line - LinesCount( getNbVisibleLines().get() / divisor );
+    const auto scrollMax = verticalScrollBar()->maximum();
+    const auto scrollMaxLine = verticalScrollToLineNumber( scrollMax );
+
+    // In wrap mode, the number of *logical* lines visible is not a reliable proxy for what fits
+    // on screen (each line can wrap to many visual rows). Centering by "visibleLines/divisor"
+    // can leave the requested line off-screen if earlier lines wrap heavily.
+    //
+    // To guarantee visibility in wrap mode, place the requested logical line at the top
+    // (except for the end-of-file snap-to-bottom case below).
+    const auto desiredTopLine
+        = useTextWrap_ ? line : ( line - LinesCount( getNbVisibleLines().get() / divisor ) );
+    const bool snapToBottom = useTextWrap_ && ( line >= scrollMaxLine );
+    const auto newTopLine = snapToBottom ? scrollMaxLine : desiredTopLine;
+
     // This will also trigger a scrollContents event
-    verticalScrollBar()->setValue( lineNumberToVerticalScroll( newTopLine ) );
+    const int newScrollValue = snapToBottom ? scrollMax : lineNumberToVerticalScroll( newTopLine );
+
+    verticalScrollBar()->setValue( newScrollValue );
 }
 
 void AbstractLogView::setLineNumbersVisible( bool lineNumbersVisible )
 {
     lineNumbersVisible_ = lineNumbersVisible;
+    // Invalidate cached column count - line number visibility affects leftMarginPx_
+    cachedVisibleColsValid_ = false;
 }
 
 void AbstractLogView::forceRefresh()
 {
     // Invalidate our cache
     textAreaCache_.invalid_ = true;
+    // Invalidate cached column count - forceRefresh may trigger leftMarginPx_ recalculation
+    cachedVisibleColsValid_ = false;
     update();
 }
 
@@ -1867,37 +1925,55 @@ LinesCount AbstractLogView::getNbVisibleLines() const
 // Returns the number of columns visible in the viewport
 LineLength AbstractLogView::getNbVisibleCols() const
 {
-    const auto scrollBarWidth = verticalScrollBar()->isVisible() ? verticalScrollBar()->width() : 0;
-    return LineLength{ ( viewport()->width() - leftMarginPx_ - scrollBarWidth ) / charWidth_ + 1 };
+    // Use cached value if valid to avoid repeated calculations
+    // However, don't use cache if leftMarginPx_ hasn't been set yet (still 0)
+    // This prevents caching incorrect values during initialization before drawTextArea() runs
+    if ( cachedVisibleColsValid_ && leftMarginPx_ > 0 ) {
+        return cachedVisibleCols_;
+    }
+    
+    // On macOS, scrollbars can auto-hide while still being functionally present (range > 0),
+    // so isVisible() is not stable. Reserve scrollbar width based on range to keep wrapping stable.
+    const bool reserveVScroll = ( verticalScrollBar()->maximum() > 0 )
+        && ( verticalScrollBarPolicy() != Qt::ScrollBarAlwaysOff );
+    const int scrollBarWidth = reserveVScroll ? verticalScrollBar()->sizeHint().width() : 0;
+
+    cachedVisibleCols_
+        = LineLength{ ( viewport()->width() - leftMarginPx_ - scrollBarWidth ) / charWidth_ + 1 };
+    // Only cache if leftMarginPx_ has been set (not 0), otherwise recalculate on next call
+    cachedVisibleColsValid_ = ( leftMarginPx_ > 0 );
+    return cachedVisibleCols_;
 }
 
 // Converts the mouse x, y coordinates to the line number in the file
 OptionalLineNumber AbstractLogView::convertCoordToLine( int yPos ) const
 {
-    const auto offset = std::abs( ( yPos - drawingTopOffset_ ) / charHeight_ );
-    const auto wrappedLineInfoIndex = static_cast<size_t>( std::floor( offset ) );
-    if ( wrappedLineInfoIndex < wrappedLinesInfo_.size() && !wrappedLinesInfo_.empty() ) {
-        return wrappedLinesInfo_[ wrappedLineInfoIndex ].lineNumber;
-    }
-    else {
+    // Use signed math (no abs) then clamp to valid range.
+    // This fixes clicks near the bottom returning "no line" due to an out-of-range index.
+    if ( wrappedLinesInfo_.empty() ) {
         return OptionalLineNumber{};
     }
+
+    const int offsetPx = yPos - drawingTopOffset_;
+    const int offsetLines = offsetPx / charHeight_;
+    const auto wrappedLineInfoIndex = static_cast<size_t>( std::clamp(
+        offsetLines, 0, static_cast<int>( wrappedLinesInfo_.size() ) - 1 ) );
+    
+    return wrappedLinesInfo_[ wrappedLineInfoIndex ].lineNumber;
 }
 
 // Converts the mouse x, y coordinates to the char coordinates (in the file)
 // This function ensure the pos exists in the file.
 FilePosition AbstractLogView::convertCoordToFilePos( const QPoint& pos ) const
 {
-    const auto offset = std::abs( ( pos.y() - drawingTopOffset_ ) / charHeight_ );
-
     if ( wrappedLinesInfo_.empty() ) {
         return FilePosition{ 0_lnum, 0_lcol };
     }
 
-    const auto wrappedLineInfoIndex = wrappedLinesInfo_.size() > 1
-                                          ? std::clamp( static_cast<size_t>( std::floor( offset ) ),
-                                                        size_t{ 0 }, wrappedLinesInfo_.size() - 1 )
-                                          : 0;
+    const int offsetPx = pos.y() - drawingTopOffset_;
+    const int offsetLines = offsetPx / charHeight_;
+    const auto wrappedLineInfoIndex = static_cast<size_t>( std::clamp(
+        offsetLines, 0, static_cast<int>( wrappedLinesInfo_.size() ) - 1 ) );
 
     const auto [ lineIndex, wrappedLineIndex, wrappedString ]
         = wrappedLinesInfo_[ wrappedLineInfoIndex ];
@@ -2266,11 +2342,22 @@ void AbstractLogView::considerMouseHovering( int xPos, int yPos )
 LinesCount AbstractLogView::getNbBottomWrappedVisibleLines() const
 {
     const LinesCount visibleLines = getNbVisibleLines();
-    const LineLength visibleColumns = getNbVisibleCols();
     
     if ( !useTextWrap_ ) {
         return visibleLines;
     }
+    
+    // Early return if leftMarginPx_ hasn't been initialized yet
+    // This prevents using incorrect column count during initialization before drawTextArea() runs
+    // leftMarginPx_ is set in drawTextArea() at line 2541, but this function may be called
+    // earlier (e.g., from updateScrollBars() during initialization)
+    if ( leftMarginPx_ == 0 ) {
+        LOG_DEBUG << "[TextWrap:Calc] getNbBottomWrappedVisibleLines: leftMarginPx_ not initialized (0),"
+                  << " returning visibleLines to avoid incorrect column calculation";
+        return visibleLines;
+    }
+    
+    const LineLength visibleColumns = getNbVisibleCols();
     
     const auto totalLines = logData_->getNbLine();
     if ( totalLines.get() == 0 ) {
@@ -2332,24 +2419,122 @@ LinesCount AbstractLogView::getNbBottomWrappedVisibleLines() const
 void AbstractLogView::updateScrollBars()
 {
     const LinesCount visibleLines = getNbVisibleLines();
-    const LineLength visibleColumns = getNbVisibleCols();
     const auto totalLines = logData_->getNbLine();
     
+    // Store scrollbar visibility before any calculations to detect changes
+    const bool scrollBarWasVisible = verticalScrollBar()->isVisible();
+    
+    // Track if scrollbar visibility changed during calculation
+    // This is needed because visibility can change multiple times (e.g., visible → hidden → visible)
+    // and we need to invalidate cache even if final state matches initial state
+    bool scrollBarVisibilityChanged = false;
+    
+    // Pre-calculate scrollMax to determine if scrollbar will be visible after setRange()
+    // This is needed because getNbBottomWrappedVisibleLines() calls getNbVisibleCols()
+    // which depends on scrollbar visibility, creating a circular dependency
     int scrollMax = 0;
     if ( totalLines >= visibleLines ) {
         if ( useTextWrap_ ) {
-            const auto unwrappedLinesAtBottom = getNbBottomWrappedVisibleLines();
-            // Ensure we don't underflow
-            if ( totalLines > unwrappedLinesAtBottom ) {
+            // For text wrap mode, we need column count to calculate unwrapped lines.
+            // However, column count depends on scrollbar visibility, which depends on scrollMax.
+            // To break the circular dependency:
+            // 1. First, estimate scrollMax assuming current scrollbar visibility
+            // 2. Temporarily set range to determine actual scrollbar visibility
+            // 3. Recalculate with correct visibility if it changed
+            
+            // Special case: if leftMarginPx_ hasn't been initialized yet (e.g., during
+            // initialization before drawTextArea() runs), getNbBottomWrappedVisibleLines()
+            // will return visibleLines early. In this case, we can't perform accurate
+            // wrapped line calculation, so we use a simple fallback calculation.
+            if ( leftMarginPx_ == 0 ) {
+                // leftMarginPx_ not initialized - use simple calculation as fallback
+                // This happens during initialization before drawTextArea() sets leftMarginPx_
                 scrollMax = static_cast<int>( std::min(
-                    ( totalLines - unwrappedLinesAtBottom ).get(),
+                    ( totalLines - visibleLines ).get(),
                     maxValue<LinesCount>().get() ) );
+                verticalScrollBar()->setRange( 0, scrollMax );
+                // Check if visibility changed after setting range
+                if ( scrollBarWasVisible != verticalScrollBar()->isVisible() ) {
+                    scrollBarVisibilityChanged = true;
+                }
+                LOG_DEBUG << "[TextWrap:ScrollBar] updateScrollBars: leftMarginPx_ not initialized,"
+                          << " using fallback calculation (scrollMax=" << scrollMax << ")";
+            }
+            else {
+                // Estimate scrollMax using current scrollbar visibility
+                // If scrollbar is currently visible, assume it will remain visible
+                // If scrollbar is currently hidden, we need to check if it will appear
+                // We'll use an iterative approach: keep recalculating until visibility stabilizes
+                // This handles cases where visibility changes multiple times due to the circular
+                // dependency between scrollbar visibility and column count calculations
+                
+                // First pass: calculate with current scrollbar visibility
+                auto unwrappedLinesAtBottom = getNbBottomWrappedVisibleLines();
+                if ( totalLines > unwrappedLinesAtBottom ) {
+                    scrollMax = static_cast<int>( std::min(
+                        ( totalLines - unwrappedLinesAtBottom ).get(),
+                        maxValue<LinesCount>().get() ) );
+                }
+                
+                // Iteratively recalculate until scrollbar visibility stabilizes
+                // Maximum iterations to prevent infinite loops (should rarely exceed 2-3 iterations)
+                constexpr int maxIterations = 10;
+                bool previousVisibility = scrollBarWasVisible;
+                
+                for ( int iteration = 0; iteration < maxIterations; ++iteration ) {
+                    // Set range to determine actual scrollbar visibility
+                    verticalScrollBar()->setRange( 0, scrollMax );
+                    
+                    // Check if visibility changed
+                    const bool currentVisibility = verticalScrollBar()->isVisible();
+                    if ( currentVisibility == previousVisibility ) {
+                        // Visibility stabilized - we're done
+                        break;
+                    }
+                    
+                    // Visibility changed - invalidate cache and recalculate
+                    scrollBarVisibilityChanged = true;
+                    cachedVisibleColsValid_ = false;
+                    
+                    // Recalculate unwrappedLinesAtBottom with correct scrollbar visibility
+                    // Note: leftMarginPx_ should be initialized by now, so this should work
+                    unwrappedLinesAtBottom = getNbBottomWrappedVisibleLines();
+                    if ( totalLines > unwrappedLinesAtBottom ) {
+                        scrollMax = static_cast<int>( std::min(
+                            ( totalLines - unwrappedLinesAtBottom ).get(),
+                            maxValue<LinesCount>().get() ) );
+                    }
+                    else {
+                        scrollMax = 0;
+                    }
+                    
+                    // Update previous visibility for next iteration
+                    previousVisibility = currentVisibility;
+                    
+                    if ( iteration == maxIterations - 1 ) {
+                        LOG_DEBUG << "[TextWrap:ScrollBar] updateScrollBars: reached max iterations ("
+                                  << maxIterations << "), visibility may not be stable";
+                    }
+                }
             }
         }
         else {
             scrollMax = static_cast<int>( std::min(
                 ( totalLines - visibleLines ).get(),
                 maxValue<LinesCount>().get() ) );
+            verticalScrollBar()->setRange( 0, scrollMax );
+            // Check if visibility changed after setting range
+            if ( scrollBarWasVisible != verticalScrollBar()->isVisible() ) {
+                scrollBarVisibilityChanged = true;
+            }
+        }
+    }
+    else {
+        // No scrolling needed - ensure range is (0,0)
+        verticalScrollBar()->setRange( 0, 0 );
+        // Check if visibility changed after setting range to (0,0)
+        if ( scrollBarWasVisible != verticalScrollBar()->isVisible() ) {
+            scrollBarVisibilityChanged = true;
         }
     }
     
@@ -2357,21 +2542,49 @@ void AbstractLogView::updateScrollBars()
               << " totalLines=" << totalLines.get()
               << " visibleLines=" << visibleLines.get()
               << " useTextWrap=" << useTextWrap_
-              << " scrollMax=" << scrollMax;
-    
-    verticalScrollBar()->setRange( 0, scrollMax );
+              << " scrollMax=" << scrollMax
+              << " scrollBarWasVisible=" << scrollBarWasVisible
+              << " scrollBarNowVisible=" << verticalScrollBar()->isVisible()
+              << " scrollBarVisibilityChanged=" << scrollBarVisibilityChanged;
 
-    int64_t hScrollMaxValue = 0;
-    if ( !useTextWrap_ && logData_->getMaxLength().get() >= visibleColumns.get() ) {
-        hScrollMaxValue = logData_->getMaxLength().get() - visibleColumns.get() + 1;
+    // Calculate visibleColumns after setRange() to ensure correct scrollbar width
+    // setRange() may show/hide the scrollbar based on range (0,0) vs (0,>0)
+    // which affects the available width for columns calculation
+    // If visibility changed at any point during calculation, invalidate cache and recalculate
+    // This handles cases where visibility changes multiple times (e.g., visible → hidden → visible)
+    // and ensures cache is invalidated even if final state matches initial state
+    if ( scrollBarVisibilityChanged ) {
+        cachedVisibleColsValid_ = false;
     }
+    
+    // Check if leftMarginPx_ has been initialized before calculating horizontal scrollbar
+    // If not initialized (still 0), skip horizontal scrollbar calculation to avoid
+    // using incorrect column count. This happens during initialization before drawTextArea()
+    // sets leftMarginPx_. The horizontal scrollbar will be correctly calculated after
+    // the first paint event when leftMarginPx_ is set.
+    if ( leftMarginPx_ > 0 ) {
+        const LineLength visibleColumns = getNbVisibleCols();
 
-    hScrollMaxValue
-        = std::min( hScrollMaxValue, static_cast<int64_t>( std::numeric_limits<int>::max() ) );
+        int64_t hScrollMaxValue = 0;
+        if ( !useTextWrap_ && logData_->getMaxLength().get() >= visibleColumns.get() ) {
+            hScrollMaxValue = logData_->getMaxLength().get() - visibleColumns.get() + 1;
+        }
 
-    horizontalScrollBar()->setRange( 0, type_safe::narrow_cast<int>( hScrollMaxValue ) );
-    horizontalScrollBar()->setPageStep(
-        type_safe::narrow_cast<int>( visibleColumns.get() * 7 / 8 ) );
+        hScrollMaxValue
+            = std::min( hScrollMaxValue, static_cast<int64_t>( std::numeric_limits<int>::max() ) );
+
+        horizontalScrollBar()->setRange( 0, type_safe::narrow_cast<int>( hScrollMaxValue ) );
+        horizontalScrollBar()->setPageStep(
+            type_safe::narrow_cast<int>( visibleColumns.get() * 7 / 8 ) );
+    }
+    else {
+        // leftMarginPx_ not initialized - skip horizontal scrollbar calculation
+        // This prevents using incorrect column count (calculated with leftMarginPx_ = 0)
+        // The horizontal scrollbar will be correctly calculated after the first paint event
+        horizontalScrollBar()->setRange( 0, 0 );
+        LOG_DEBUG << "[TextWrap:ScrollBar] updateScrollBars: leftMarginPx_ not initialized,"
+                  << " skipping horizontal scrollbar calculation";
+    }
 }
 
 void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
@@ -2379,31 +2592,29 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
     // When text wrapping is enabled, create pixmap with sufficient height for wrapped content.
     // We can't pre-calculate this in updateDisplaySize because wrapped line count is variable.
     // Allocate height for all remaining lines to ensure complete rendering.
-    if ( useTextWrap_ && paintDevice == &textAreaCache_.pixmap_ && textAreaCache_.pixmap_.isNull() ) {
-        const auto linesInFile = logData_->getNbLine();
-        const auto remainingLines = LineNumber( linesInFile.get() ) >= firstLine_ 
-            ? linesInFile - LinesCount( firstLine_.get() )
-            : 0_lcount;
-        // When text wrapping is enabled, lines can wrap to multiple visual lines.
-        // Estimate worst-case height by assuming average wrap factor.
-        // For bottom-aligned views, we need enough height to draw all lines from firstLine_ to end.
-        // Use a multiplier to account for wrapped lines (conservative estimate: 3x).
-        const int wrapMultiplier = 3;  // Assume each line wraps to at most 3 lines on average
-        const int minHeight = viewport()->height();
-        const int estimatedContentHeight = static_cast<int>( remainingLines.get() ) * charHeight_ * wrapMultiplier;
-        const int estimatedHeight = std::max( minHeight, estimatedContentHeight );
-        
-        LOG_DEBUG << "[TextWrap:Draw] Creating pixmap for wrapped text:"
-                  << " remainingLines=" << remainingLines.get()
-                  << " charHeight=" << charHeight_
-                  << " estimatedHeight=" << estimatedHeight
-                  << " viewportHeight=" << viewport()->height();
-        
-        textAreaCache_.pixmap_ = QPixmap{
-            static_cast<int>( std::ceil( viewport()->width() * viewport()->devicePixelRatio() ) ),
-            static_cast<int>( std::ceil( estimatedHeight * viewport()->devicePixelRatio() ) )
-        };
-        textAreaCache_.pixmap_.setDevicePixelRatio( viewport()->devicePixelRatio() );
+    if ( useTextWrap_ && paintDevice == &textAreaCache_.pixmap_ ) {
+        // Runtime evidence: wrapped drawing can exceed viewport height (bottom alignment),
+        // so allocate a bounded buffer big enough to avoid clipping.
+        // 2x viewport height is usually sufficient, but when the viewport is very small
+        // the *last* wrapped line can be taller than 2x, causing bottom-alignment to shift
+        // into undrawn space (blank/gray). Use a small fixed minimum and a hard cap.
+        static constexpr int MinWrapCacheHeightPx = 512;
+        static constexpr int MaxWrapCacheHeightPx = 4096;
+        const int estimatedHeight = std::clamp( std::max( viewport()->height() * 2, MinWrapCacheHeightPx ),
+                                                MinWrapCacheHeightPx, MaxWrapCacheHeightPx );
+        const auto dpr = viewport()->devicePixelRatio();
+        const int requiredPixW = static_cast<int>( std::ceil( viewport()->width() * dpr ) );
+        const int requiredPixH = static_cast<int>( std::ceil( estimatedHeight * dpr ) );
+
+        const bool needsRecreate = textAreaCache_.pixmap_.isNull()
+            || ( textAreaCache_.pixmap_.devicePixelRatio() != dpr )
+            || ( textAreaCache_.pixmap_.width() < requiredPixW )
+            || ( textAreaCache_.pixmap_.height() < requiredPixH );
+
+        if ( needsRecreate ) {
+            textAreaCache_.pixmap_ = QPixmap{ requiredPixW, requiredPixH };
+            textAreaCache_.pixmap_.setDevicePixelRatio( dpr );
+        }
     }
     // LOG_DEBUG << "devicePixelRatio: " << viewport()->devicePixelRatio();
     // LOG_DEBUG << "viewport size: " << viewport()->size().width();
@@ -2415,7 +2626,6 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
 
     const int fontHeight = charHeight_;
     const int fontAscent = painter->fontMetrics().ascent();
-    const LineLength nbVisibleCols = getNbVisibleCols();
 
     const int paintDeviceHeight
         = static_cast<int>( std::floor( paintDevice->height() / viewport()->devicePixelRatio() ) );
@@ -2503,7 +2713,42 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
 
     // This is the total width of the 'margin' (including line number if any)
     // used for mouse calculation etc...
+    const bool leftMarginWasUninitialized = ( leftMarginPx_ == 0 );
     leftMarginPx_ = contentStartPosX + SeparatorWidth;
+    
+    // Invalidate cached column count - leftMarginPx_ is now correctly calculated
+    // This ensures getNbVisibleCols() recalculates with correct leftMarginPx_ value
+    // instead of using stale cached value from before leftMarginPx_ was set
+    cachedVisibleColsValid_ = false;
+    
+    // Recalculate nbVisibleCols now that leftMarginPx_ is correctly set
+    // This fixes the issue where nbVisibleCols was calculated before leftMarginPx_
+    // was set, causing incorrect column count for text rendering
+    LineLength nbVisibleCols = getNbVisibleCols();
+
+    // If leftMarginPx_ was uninitialized (0) and is now set, we need to recalculate
+    // scrollbar ranges. This happens during initialization when updateScrollBars() was
+    // called before drawTextArea() set leftMarginPx_. The fallback calculation used
+    // unwrapped line counts, which can produce incorrect scrollMax for text wrap mode.
+    // In non-wrap mode, the horizontal scrollbar also depends on leftMarginPx_ (via
+    // visibleColumns calculation), so we need to recalculate in both modes.
+    // 
+    // IMPORTANT: Do not call updateScrollBars() directly during paintEvent() as it modifies
+    // scrollbar ranges which can trigger additional paint events or cause visual artifacts.
+    // Instead, set a flag to defer the update until after paintEvent() completes.
+    // This prevents reentrancy issues and works correctly in test environments.
+    if ( leftMarginWasUninitialized ) {
+        LOG_DEBUG << "[TextWrap:Draw] leftMarginPx_ initialized, marking scrollbar update pending"
+                  << " (was 0, now " << leftMarginPx_ << ", useTextWrap=" << useTextWrap_ << ")";
+        
+        // Set flag to update scrollbars after paintEvent() completes
+        // This will be handled in paintEvent() after drawing is complete
+        pendingScrollBarUpdate_ = true;
+        
+        // Note: We cannot recalculate nbVisibleCols here because updateScrollBars() hasn't
+        // been called yet. The deferred updateScrollBars() call will handle cache invalidation
+        // if scrollbar visibility changes, and the next paintEvent() will recalculate correctly.
+    }
 
     const auto searchStartIndex = lineIndex( searchStart_ );
     const auto searchEndIndex = [ this ] {
@@ -2580,7 +2825,9 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
             foreColor = palette.color( QPalette::Text );
             backColor = palette.color( QPalette::Base );
 
-            if ( lineNumber < searchStartIndex || lineNumber >= searchEndIndex ) {
+            // Apply search range graying only if the view type allows it (LogMainView only, not FilteredView)
+            // and the line is outside the search range
+            if ( shouldApplySearchRangeGraying() && ( lineNumber < searchStartIndex || lineNumber >= searchEndIndex ) ) {
                 foreColor = palette.brush( QPalette::Disabled, QPalette::Text ).color();
             }
             else {
@@ -2661,6 +2908,8 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
         const auto finalLineHeight
             = fontHeight * static_cast<int>( wrappedLineView.wrappedLinesCount() );
         // LOG_INFO << "Draw line " << lineNumber << ": " << expandedLine;
+
+        const bool isLastLineInFile = ( lineNumber.get() + 1 ) >= linesInFile.get();
 
         painter->fillRect( xPos - ContentMarginWidth, yPos, viewport()->width(), finalLineHeight,
                            backColor );
@@ -2785,12 +3034,11 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
         // Check if we should stop drawing. However, if this is the last line in the file
         // and text wrapping is enabled, we should draw all wrapped lines even if they
         // exceed the viewport height, so the user can see the complete last line.
-        // Also, if lastLineAligned_ is true, we are in "bottom alignment" mode where
-        // paintEvent will shift the content up. We must ensure we draw enough content
-        // (potentially exceeding viewport height) to support this shift.
-        const bool isLastLineInFile = ( lineNumber.get() + 1 ) >= linesInFile.get();
-        const bool continueForWrap = useTextWrap_ && ( isLastLineInFile || lastLineAligned_ );
-        if ( yPos > viewport()->height() && !continueForWrap ) {
+        // Also, if lastLineAligned_ is true, we need a bounded buffer for bottom alignment:
+        // draw up to the paint device height (which is 2x viewport in wrap mode).
+        const bool continueForLastLine = useTextWrap_ && isLastLineInFile;
+        const bool continueForBottomAlign = useTextWrap_ && lastLineAligned_ && ( yPos < paintDeviceHeight );
+        if ( yPos > viewport()->height() && !continueForLastLine && !continueForBottomAlign ) {
             LOG_DEBUG << "[TextWrap:Draw] Breaking at line " << lineNumber.get()
                       << " yPos=" << yPos << " viewportHeight=" << viewport()->height();
             break;
@@ -2798,11 +3046,11 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
     } // For each line
     
     // Store the actual drawn height for proper alignment in paintEvent
-    textAreaCache_.actual_height_ = yPos;
+    textAreaCache_.actual_height_ = ( paintDevice == &textAreaCache_.pixmap_ )
+        ? std::min( yPos, paintDeviceHeight )
+        : yPos;
     
-    LOG_DEBUG << "[TextWrap:Draw] Draw complete: actual_height_=" << yPos
-              << " viewportHeight=" << viewport()->height()
-              << " lastLineAligned_=" << lastLineAligned_;
+    // Drawing complete; actual_height_ is used for bottom-alignment in paintEvent().
 }
 
 // Draw the "pull to follow" bar and return a pixmap.

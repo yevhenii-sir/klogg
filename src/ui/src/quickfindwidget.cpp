@@ -104,7 +104,14 @@ QuickFindWidget::QuickFindWidget( QWidget* parent )
     connect( editQuickFind_, &QLineEdit::textEdited, this, &QuickFindWidget::textChanged );
     connect( editQuickFind_, &QLineEdit::returnPressed, this, &QuickFindWidget::returnHandler );
 
+// Qt compatibility:
+// - QCheckBox::stateChanged exists in Qt5 and Qt6.
+// - QCheckBox::checkStateChanged exists only in newer Qt6 versions.
+#if ( QT_VERSION >= QT_VERSION_CHECK( 6, 7, 0 ) )
+    connect( ignoreCaseCheck_, &QCheckBox::checkStateChanged, this, [ this ] {
+#else
     connect( ignoreCaseCheck_, &QCheckBox::stateChanged, this, [ this ] {
+#endif
         textChanged();
         Configuration::get().setQfIgnoreCase( ignoreCaseCheck_->isChecked() );
         Configuration::get().save();

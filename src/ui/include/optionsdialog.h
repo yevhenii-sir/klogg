@@ -92,6 +92,7 @@ class OptionsDialog : public QDialog, public Ui::OptionsDialog {
     void changeQfColor();
 
     void checkShortcutsOnDuplicate() const;
+    void openLogFile();
 
   private:
     void setupTabs();

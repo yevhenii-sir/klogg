@@ -78,8 +78,12 @@ AbstractLogData::LineType FilteredView::lineType( LineNumber lineNumber ) const
 
 LineNumber FilteredView::displayLineNumber( LineNumber lineNumber ) const
 {
-    // Display a 1-based index
-    return logFilteredData_->getMatchingLineNumber( lineNumber ) + 1_lcount;
+    // Display a 1-based line number from the original log file
+    // lineNumber is the index in the filtered view (which may include context lines)
+    // Use getMatchingLineNumber() which returns 0-based line numbers, then add 1
+    // Note: getLineNumber() already adds 1, so we use getMatchingLineNumber() to avoid double increment
+    const auto originalLineNumber = logFilteredData_->getMatchingLineNumber( lineNumber );
+    return originalLineNumber + 1_lcount;
 }
 
 LineNumber FilteredView::lineIndex( LineNumber lineNumber ) const
@@ -90,6 +94,13 @@ LineNumber FilteredView::lineIndex( LineNumber lineNumber ) const
 LineNumber FilteredView::maxDisplayLineNumber() const
 {
     return LineNumber( logFilteredData_->getNbTotalLines().get() );
+}
+
+bool FilteredView::shouldApplySearchRangeGraying() const
+{
+    // In FilteredView, all visible lines are part of the filtered result,
+    // so search range graying should never be applied
+    return false;
 }
 
 void FilteredView::doRegisterShortcuts()

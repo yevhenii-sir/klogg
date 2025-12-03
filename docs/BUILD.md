@@ -151,37 +151,205 @@ Put libcrypto-1_1 and libssl-1_1 for desired architecture near klogg binaries.
 
 Klogg requires macOS High Sierra (10.13) or higher.
 
-Install [Homebrew](https://brew.sh/) using terminal:
+#### Step 1: Verify Xcode Command Line Tools
 
-```
-/usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
-```
+First, verify that Xcode Command Line Tools are installed:
 
-Homebrew installer should also install xcode command line tools.
-
-Download and install build dependencies:
-
-```
-brew install cmake ninja qt boost ragel
+```bash
+xcode-select --version
 ```
 
-Usually path to qt installation looks like `/usr/local/Cellar/qt/5.14.0/lib/cmake/Qt5`
+If not installed, run:
 
-Configure and build klogg:
-
+```bash
+xcode-select --install
 ```
+
+#### Step 2: Install Homebrew (if not already installed)
+
+Homebrew is the package manager for macOS. If not installed, run:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+After installation, add Homebrew to PATH (if using Apple Silicon Mac):
+
+```bash
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+
+#### Step 3: Install Build Dependencies
+
+Install all required dependencies using Homebrew:
+
+```bash
+brew install cmake ninja qt@6 boost ragel
+```
+
+**Notes:**
+- `cmake`: Build system generator (requires version 3.12 or later)
+- `ninja`: Fast build tool
+- `qt@6`: Qt 6 libraries (project supports Qt 5.9+ or Qt 6, CI uses Qt 6.7.3)
+- `boost`: Boost C++ libraries (header-only part, for Hyperscan)
+- `ragel`: Ragel state machine compiler (version 6.8 or later, for Hyperscan)
+
+**Note:** If you already have Qt 5 installed, you can use Qt 5 instead. The project supports both Qt 5 and Qt 6.
+
+#### Step 4: Find Qt Installation Path
+
+After installation, you need to find the Qt installation path. Typical paths are:
+
+- **Intel Mac (Homebrew default):** `/usr/local/Cellar/qt@6/<version>/lib/cmake/Qt6`
+- **Apple Silicon Mac:** `/opt/homebrew/Cellar/qt@6/<version>/lib/cmake/Qt6`
+
+You can find it using:
+
+```bash
+brew --prefix qt@6
+```
+
+Or search directly:
+
+```bash
+find /opt/homebrew /usr/local -name "Qt6Config.cmake" 2>/dev/null | head -1
+```
+
+#### Step 5: Create Build Directory
+
+Create a build directory in the project root:
+
+```bash
 cd <path_to_klogg_repository_clone>
-mkdir build_root
+mkdir -p build_root
 cd build_root
-cmake -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DQt5_DIR=<path_to_qt_install> ..
-cmake --build .
+```
+
+#### Step 6: Configure CMake
+
+Choose the appropriate configuration command based on your Qt version:
+
+**Using Qt 6 (recommended, matches CI):**
+
+```bash
+cmake -G Ninja \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DKLOGG_OSX_DEPLOYMENT_TARGET=14.0 \
+  -DKLOGG_GENERIC_CPU=ON \
+  -DKLOGG_USE_SENTRY=OFF \
+  -DQt6_DIR=$(brew --prefix qt@6)/lib/cmake/Qt6 \
+  ..
+```
+
+**Using Qt 5:**
+
+```bash
+cmake -G Ninja \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DKLOGG_OSX_DEPLOYMENT_TARGET=14.0 \
+  -DKLOGG_GENERIC_CPU=ON \
+  -DKLOGG_USE_SENTRY=OFF \
+  -DQt5_DIR=$(brew --prefix qt5)/lib/cmake/Qt5 \
+  ..
+```
+
+**Parameter explanations:**
+- `-G Ninja`: Use Ninja as the build system (faster)
+- `-DCMAKE_BUILD_TYPE=RelWithDebInfo`: Release build with debug information
+- `-DKLOGG_OSX_DEPLOYMENT_TARGET=14.0`: Target macOS version (adjust as needed, e.g., 13.0, 14.0, 15.0)
+- `-DKLOGG_GENERIC_CPU=ON`: Build for generic CPU (matches CI)
+- `-DKLOGG_USE_SENTRY=OFF`: Disable Sentry crash reporting (recommended on macOS)
+- `-DQt6_DIR` or `-DQt5_DIR`: Path to Qt CMake configuration files
+
+**If CMake cannot find Qt, manually specify the path:**
+
+```bash
+# First find Qt path
+QT_PATH=$(brew --prefix qt@6)
+echo "Qt path: $QT_PATH"
+
+# Then use full path
+cmake -G Ninja \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DKLOGG_OSX_DEPLOYMENT_TARGET=14.0 \
+  -DKLOGG_GENERIC_CPU=ON \
+  -DKLOGG_USE_SENTRY=OFF \
+  -DQt6_DIR=$QT_PATH/lib/cmake/Qt6 \
+  ..
+```
+
+#### Step 7: Build the Project
+
+After successful configuration, start building:
+
+```bash
+cmake --build . -j$(sysctl -n hw.ncpu)
+```
+
+The `-j$(sysctl -n hw.ncpu)` flag uses all CPU cores on your Mac for parallel compilation, speeding up the process.
+
+Alternatively, use Ninja directly:
+
+```bash
+ninja
 ```
 
 Binaries are placed into `build_root/output`.
 
+#### Step 8: Run the Application
+
+After compilation, the executable is located at:
+
+```bash
+build_root/output/klogg
+```
+
+You can run it directly:
+
+```bash
+./build_root/output/klogg
+```
+
+#### Step 9: (Optional) Package as DMG
+
+If you need to create a macOS installer package (DMG), run:
+
+```bash
+cd build_root
+cpack
+```
+
+The DMG file will be generated in the `build_root/packages/` directory.
+
+#### Troubleshooting
+
+**CMake cannot find Qt:**
+- Ensure Qt is correctly installed: `brew list qt@6`
+- Manually specify Qt path: `-DQt6_DIR=$(brew --prefix qt@6)/lib/cmake/Qt6`
+- Check Qt version: `brew info qt@6`
+
+**Cannot find ragel:**
+```bash
+brew install ragel
+# Ensure ragel is in PATH
+which ragel
+```
+
+**Cannot find boost:**
+```bash
+brew install boost
+# Set environment variable if needed
+export BOOST_ROOT=$(brew --prefix boost)
+```
+
+**Build errors:**
+- Ensure all dependencies are installed: `brew list cmake ninja qt@6 boost ragel`
+- Clean build directory and reconfigure: `rm -rf build_root && mkdir build_root`
+
 By default, klogg will rely on cmake to figure out target MacOS version. Usually it uses build host version.
 To override default cmake value pass an option `-DKLOGG_OSX_DEPLOYMENT_TARGET=<target>` to cmake during configuration step,
-`<target>` is one of `10.14`, `10.15`, `11`, `12`. Klogg's traget must be greater or equal to target used by Qt libraries.
+`<target>` is one of `10.14`, `10.15`, `11`, `12`, `13`, `14`, `15`. Klogg's target must be greater or equal to target used by Qt libraries.
 
 ## Running tests
 

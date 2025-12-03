@@ -283,3 +283,62 @@ jobs:
           name: packages-${{ matrix.config.artifacts_id }}
           path: '${{ env.KLOGG_BUILD_ROOT }}/packages/*'
           if-no-files-found: error
+
+  CreatePreRelease:
+    if: "!contains(github.event.head_commit.message, '[skip ci]') && github.event_name == 'push'"
+    needs: [Linux, Mac, Windows]
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.KLOGG_GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download version artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: klogg_version
+          path: klogg_version
+
+      - name: Set version
+        run: echo "KLOGG_VERSION=$(cat klogg_version/klogg_version.txt)" >> $GITHUB_ENV
+
+      - name: Download all package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./packages-all
+
+      - name: Clean up package artifacts
+        shell: sh
+        run: |
+          # Remove macOS app bundles and internal files that shouldn't be uploaded to GitHub Release
+          # These files are inside DMG packages and shouldn't be uploaded as separate assets
+          find ./packages-all -type d -name "*.app" -exec rm -rf {} + 2>/dev/null || true
+          find ./packages-all -type f \( -name "Info.plist" -o -name "libq*.dylib" -o -name "klogg.icns" -o -name "qt.conf" \) -delete 2>/dev/null || true
+          # Remove Qt framework files that are inside app bundles (not package files)
+          find ./packages-all -type f -name "Qt*" ! -name "*.dmg" ! -name "*.deb" ! -name "*.rpm" ! -name "*.AppImage" -delete 2>/dev/null || true
+          # Remove standalone klogg binary (should be inside packages, not standalone)
+          find ./packages-all -type f -name "klogg" ! -name "*.AppImage" ! -name "*.deb" ! -name "*.rpm" -delete 2>/dev/null || true
+          # Keep only final package files: .dmg, .deb, .rpm, .AppImage, .exe, .zip, .txt, .xz, .tar.xz
+          find ./packages-all -type f ! \( -name "*.dmg" -o -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" -o -name "*.txt" -o -name "*.xz" -o -name "*.tar.xz" \) -delete 2>/dev/null || true
+
+      - name: Delete existing continuous release
+        env:
+          GITHUB_TOKEN: ${{ secrets.KLOGG_GITHUB_TOKEN }}
+        run: |
+          gh release delete continuous --cleanup-tag --yes || true
+
+      - name: Create pre-release (continuous)
+        if: env.GITHUB_TOKEN != ''
+        uses: softprops/action-gh-release@v1
+        with:
+          token: ${{ secrets.KLOGG_GITHUB_TOKEN }}
+          tag_name: continuous
+          name: Continuous Build ${{ env.KLOGG_VERSION }}
+          body: |
+            Continuous build ${{ env.KLOGG_VERSION }}
+            
+            This is an automated pre-release build. For stable releases, see [releases](https://github.com/ZEACENT/klogg/releases).
+          prerelease: true
+          files: |
+            ./packages-all/**/*
+          draft: false

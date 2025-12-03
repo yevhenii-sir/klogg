@@ -20,7 +20,12 @@
 #include <QApplication>
 #include <QPalette>
 #include <QStyleFactory>
+#include <QSettings>
 #include <qcolor.h>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 #include "configuration.h"
 #include "log.h"
@@ -68,11 +73,89 @@ QString StyleManager::defaultPlatformStyle()
 #endif
 }
 
+// Detect system theme preference
+static bool isSystemDarkTheme()
+{
+#ifdef Q_OS_WIN
+    // Windows 10/11 dark mode detection
+    HKEY hKey;
+    if ( RegOpenKeyExW( HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 0, KEY_READ, &hKey ) == ERROR_SUCCESS ) {
+        DWORD value = 0;
+        DWORD size = sizeof( DWORD );
+        if ( RegQueryValueExW( hKey, L"AppsUseLightTheme", nullptr, nullptr, reinterpret_cast<LPBYTE>( &value ), &size ) == ERROR_SUCCESS ) {
+            RegCloseKey( hKey );
+            return value == 0; // 0 means dark theme
+        }
+        RegCloseKey( hKey );
+    }
+    return false;
+#elif defined( Q_OS_MACOS )
+    // macOS dark mode detection
+    QSettings settings( "Apple Global Domain", QSettings::NativeFormat );
+    QString style = settings.value( "AppleInterfaceStyle", "Light" ).toString();
+    return style == "Dark";
+#else
+    // Linux: Check GTK theme or environment variable
+    QSettings gtkSettings( QSettings::UserScope, "gtk-3.0", "settings" );
+    QString gtkTheme = gtkSettings.value( "gtk-theme-name", "" ).toString().toLower();
+    if ( gtkTheme.contains( "dark" ) ) {
+        return true;
+    }
+    // Check environment variable
+    QString envTheme = qgetenv( "GTK_THEME" ).toLower();
+    if ( envTheme.contains( "dark" ) ) {
+        return true;
+    }
+    return false;
+#endif
+}
+
 void StyleManager::applyStyle( const QString& style )
 {
     LOG_INFO << "Setting style to " << style;
 
-    if ( style == DarkStyleKey || style == DarkWindowsStyleKey ) {
+    // Apply theme based on theme mode
+    const auto& config = Configuration::get();
+    QString actualStyle = style;
+    
+    if ( config.themeMode() == ThemeMode::Auto ) {
+        // Auto mode: use system preference
+        if ( isSystemDarkTheme() ) {
+            // Use dark style
+#ifdef Q_OS_WIN
+            actualStyle = DarkWindowsStyleKey;
+#else
+            actualStyle = DarkStyleKey;
+#endif
+        }
+        else {
+            // Use light style (platform default)
+            actualStyle = defaultPlatformStyle();
+        }
+        LOG_INFO << "Auto theme mode: system is " << ( isSystemDarkTheme() ? "dark" : "light" )
+                 << ", using style " << actualStyle;
+    }
+    else if ( config.themeMode() == ThemeMode::Dark ) {
+        // Force dark theme
+#ifdef Q_OS_WIN
+        actualStyle = DarkWindowsStyleKey;
+#else
+        actualStyle = DarkStyleKey;
+#endif
+        LOG_INFO << "Dark theme mode: forcing dark style " << actualStyle;
+    }
+    else {
+        // Light mode: use platform default or specified style
+        if ( style == DarkStyleKey || style == DarkWindowsStyleKey ) {
+            actualStyle = defaultPlatformStyle();
+            LOG_INFO << "Light theme mode: overriding dark style to " << actualStyle;
+        }
+        else {
+            actualStyle = style;
+        }
+    }
+
+    if ( actualStyle == DarkStyleKey || actualStyle == DarkWindowsStyleKey ) {
         const auto palette = Configuration::get().darkPalette();
 
         QPalette darkPalette;
@@ -101,7 +184,7 @@ void StyleManager::applyStyle( const QString& style )
         darkPalette.setColor( QPalette::Disabled, QPalette::Light,
                               QColor( palette.at( "DisabledLight" ) ) );
 
-        if ( style == DarkWindowsStyleKey ) {
+        if ( actualStyle == DarkWindowsStyleKey ) {
             qApp->setStyle( QStyleFactory::create( WindowsKey ) );
         }
         else {

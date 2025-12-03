@@ -181,6 +181,11 @@ class AbstractLogView : public QAbstractScrollArea, public SearchableWidgetInter
     virtual LineNumber lineIndex( LineNumber lineNumber ) const;
     virtual LineNumber maxDisplayLineNumber() const;
 
+    // Returns whether search range graying should be applied (true by default)
+    // FilteredView overrides this to return false since all visible lines are part of the filter
+    virtual bool shouldApplySearchRangeGraying() const;
+
+
     // Get the overview associated with this view, or NULL if there is none
     Overview* getOverview() const
     {
@@ -384,6 +389,14 @@ class AbstractLogView : public QAbstractScrollArea, public SearchableWidgetInter
     // Text handling
     int charWidth_ = 1;
     int charHeight_ = 10;
+
+    // Cached visible column count to avoid repeated calculations
+    mutable LineLength cachedVisibleCols_ = 0_length;
+    mutable bool cachedVisibleColsValid_ = false;
+    
+    // Flag to defer scrollbar update after paintEvent() completes
+    // Set to true when leftMarginPx_ is initialized during drawTextArea()
+    mutable bool pendingScrollBarUpdate_ = false;
 
     // Popup menu
     QMenu* popupMenu_;

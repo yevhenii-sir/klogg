@@ -57,6 +57,8 @@ enum class SearchRegexpType {
 };
 
 enum class RegexpEngine { Hyperscan, QRegularExpression };
+
+enum class ThemeMode { Light, Dark, Auto };
 static constexpr int MAX_RECENT_FILES = 25;
 
 // Configuration class containing everything in the "Settings" dialog
@@ -284,6 +286,14 @@ class Configuration final : public Persistable<Configuration> {
     QString style() const
     {
         return style_;
+    }
+    ThemeMode themeMode() const
+    {
+        return themeMode_;
+    }
+    void setThemeMode( ThemeMode mode )
+    {
+        themeMode_ = mode;
     }
     void setMainLineNumbersVisible( bool lineNumbersVisible )
     {
@@ -563,6 +573,7 @@ class Configuration final : public Persistable<Configuration> {
     bool lineNumbersVisibleInFiltered_ = true;
     bool minimizeToTray_ = false;
     QString style_;
+    ThemeMode themeMode_ = ThemeMode::Auto;
 
     // Default settings for new views
     bool searchAutoRefresh_ = false;
@@ -618,25 +629,27 @@ class Configuration final : public Persistable<Configuration> {
 
     std::map<std::string, QStringList> shortcuts_;
 
-    // based on https://gist.github.com/QuantumCD/6245215
+    // Dark theme palette inspired by popular IDEs and terminal themes
+    // Colors optimized for developer aesthetics with good contrast
+    // FilteredView uses Base color, so ensure it matches Window for consistency
     std::map<QString, QString> darkPalette_ = {
-        {"Window", "#353535"},
-        {"WindowText", "#FFFFFF"},
-        {"Base", "#282828"},
-        {"AlternateBase", "#353535"},
-        {"ToolTipBase", "#2a82da"},
-        {"ToolTipText", "#FFFFFF"},
-        {"Text", "#FFFFFF"},
-        {"Button", "#353535"},
-        {"ButtonText", "#FFFFFF"},
-        {"Link", "#2a82da"},
-        {"Highlight", "#2a82da"},
-        {"HighlightedText", "#212121"},
-        {"ActiveButton", "#303030"},
-        {"DisabledButtonText", "#757575"},
-        {"DisabledWindowText", "#808080"},
-        {"DisabledText", "#808080"},
-        {"DisabledLight", "#353535"},
+        {"Window", "#1e1e1e"},           // VS Code dark background - main view
+        {"WindowText", "#d4d4d4"},        // Light gray text
+        {"Base", "#1e1e1e"},              // Same as Window for FilteredView consistency
+        {"AlternateBase", "#252526"},     // Slightly lighter for alternate rows
+        {"ToolTipBase", "#1e1e1e"},       // Tooltip background
+        {"ToolTipText", "#d4d4d4"},       // Tooltip text
+        {"Text", "#d4d4d4"},              // Main text color - high contrast white
+        {"Button", "#2d2d30"},            // Button background
+        {"ButtonText", "#d4d4d4"},        // Button text
+        {"Link", "#4ec9b0"},              // Cyan link color
+        {"Highlight", "#264f78"},         // Selection background
+        {"HighlightedText", "#ffffff"},    // Selection text
+        {"ActiveButton", "#3e3e42"},      // Active button background
+        {"DisabledButtonText", "#6a6a6a"}, // Disabled button text
+        {"DisabledWindowText", "#6a6a6a"}, // Disabled window text
+        {"DisabledText", "#6a6a6a"},       // Disabled text
+        {"DisabledLight", "#2d2d30"},      // Disabled light
     };
 };
 
