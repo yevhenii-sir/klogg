@@ -200,10 +200,10 @@ MainWindow::MainWindow( WindowSession session )
 
     // Establish the QuickFindWidget and mux ( to send requests from the
     // QFWidget to the right window )
-    connect( &quickFindWidget_, SIGNAL( patternConfirmed( const QString&, bool, bool ) ),
-             &quickFindMux_, SLOT( confirmPattern( const QString&, bool, bool ) ) );
-    connect( &quickFindWidget_, SIGNAL( patternUpdated( const QString&, bool, bool ) ),
-             &quickFindMux_, SLOT( setNewPattern( const QString&, bool, bool ) ) );
+    connect( &quickFindWidget_, SIGNAL( patternConfirmed( const QString&, bool, bool, bool ) ),
+             &quickFindMux_, SLOT( confirmPattern( const QString&, bool, bool, bool ) ) );
+    connect( &quickFindWidget_, SIGNAL( patternUpdated( const QString&, bool, bool, bool ) ),
+             &quickFindMux_, SLOT( setNewPattern( const QString&, bool, bool, bool ) ) );
     connect( &quickFindWidget_, SIGNAL( cancelSearch() ), &quickFindMux_, SLOT( cancelSearch() ) );
     connect( &quickFindWidget_, SIGNAL( searchForward() ), &quickFindMux_,
              SLOT( searchForward() ) );
@@ -212,8 +212,8 @@ MainWindow::MainWindow( WindowSession session )
     connect( &quickFindWidget_, SIGNAL( searchNext() ), &quickFindMux_, SLOT( searchNext() ) );
 
     // QuickFind changes coming from the views
-    connect( &quickFindMux_, SIGNAL( patternChanged( const QString& ) ), this,
-             SLOT( changeQFPattern( const QString& ) ) );
+    connect( &quickFindMux_, SIGNAL( patternChanged( const QString&, bool, bool, bool ) ), this,
+             SLOT( changeQFPattern( const QString&, bool, bool, bool ) ) );
     connect( &quickFindMux_, SIGNAL( notify( const QFNotification& ) ), &quickFindWidget_,
              SLOT( notify( const QFNotification& ) ) );
     connect( &quickFindMux_, SIGNAL( clearNotification() ), &quickFindWidget_,
@@ -1527,9 +1527,9 @@ void MainWindow::currentTabChanged( int index )
     }
 }
 
-void MainWindow::changeQFPattern( const QString& newPattern )
+void MainWindow::changeQFPattern( const QString& newPattern, bool ignoreCase, bool isRegex, bool isWholeWord )
 {
-    quickFindWidget_.changeDisplayedPattern( newPattern, true );
+    quickFindWidget_.changeDisplayedPattern( newPattern, ignoreCase, isRegex, isWholeWord );
 }
 
 void MainWindow::loadFileNonInteractive( const QString& file_name )
@@ -2266,7 +2266,7 @@ void MainWindow::displayQuickFindBar( QuickFindMux::QFDirection direction )
     if ( crawler != nullptr && crawler->isPartialSelection() ) {
         auto selection = crawler->getSelectedText();
         if ( !selection.isEmpty() ) {
-            quickFindWidget_.changeDisplayedPattern( selection, false );
+            quickFindWidget_.changeDisplayedPattern( selection, Configuration::get().qfIgnoreCase(), false, false );
         }
     }
 

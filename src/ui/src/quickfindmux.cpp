@@ -99,7 +99,7 @@ void QuickFindMux::searchBackward()
         searchable->searchBackward();
 }
 
-void QuickFindMux::setNewPattern( const QString& newPattern, bool ignoreCase, bool isRegexSearch )
+void QuickFindMux::setNewPattern( const QString& newPattern, bool ignoreCase, bool isRegexSearch, bool isWholeWord )
 {
     const auto& config = Configuration::get();
 
@@ -107,7 +107,7 @@ void QuickFindMux::setNewPattern( const QString& newPattern, bool ignoreCase, bo
 
     // If we must do an incremental search, we do it now
     if ( config.isQuickfindIncremental() ) {
-        pattern_->changeSearchPattern( newPattern, ignoreCase, isRegexSearch );
+        pattern_->changeSearchPattern( newPattern, ignoreCase, isRegexSearch, isWholeWord );
         if ( auto searchable = getSearchableWidget() ) {
             if ( currentDirection_ == Forward )
                 searchable->incrementallySearchForward();
@@ -117,9 +117,9 @@ void QuickFindMux::setNewPattern( const QString& newPattern, bool ignoreCase, bo
     }
 }
 
-void QuickFindMux::confirmPattern( const QString& newPattern, bool ignoreCase, bool isRegexSearch )
+void QuickFindMux::confirmPattern( const QString& newPattern, bool ignoreCase, bool isRegexSearch, bool isWholeWord )
 {
-    pattern_->changeSearchPattern( newPattern, ignoreCase, isRegexSearch );
+    pattern_->changeSearchPattern( newPattern, ignoreCase, isRegexSearch, isWholeWord );
 
     if ( Configuration::get().isQuickfindIncremental() ) {
         if ( auto searchable = getSearchableWidget() )
@@ -146,7 +146,7 @@ void QuickFindMux::changeQuickFind( const QString& new_pattern, QFDirection new_
 
 void QuickFindMux::notifyPatternChanged()
 {
-    Q_EMIT patternChanged( pattern_->getPattern() );
+    Q_EMIT patternChanged( pattern_->getPattern(), !pattern_->isCaseSensitive(), pattern_->isRegex(), pattern_->isWholeWord() );
 }
 
 //

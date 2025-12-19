@@ -170,7 +170,7 @@ class MainWindow : public QMainWindow {
 
     // Instructs the widget to change the pattern in the QuickFind widget
     // and confirm it.
-    void changeQFPattern( const QString& newPattern );
+    void changeQFPattern( const QString& newPattern, bool ignoreCase, bool isRegex, bool isWholeWord );
 
   Q_SIGNALS:
     // Is emitted when new settings must be used

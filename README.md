@@ -34,7 +34,7 @@ combination of grep, less, and tail.
 ![Klogg main window](website/static/screenshots/mainwindow.png)
 
 Please refer to the
-[documentation](DOCUMENTATION.md)
+[technical documentation](docs/TECHNICAL_DOCUMENTATION.md)
 page for how to use Klogg.
 
 ### Latest testing builds
@@ -194,7 +194,7 @@ for how to setup Klogg on your local machine for development and testing purpose
 ## How to Get Help
 
 First, please refer to the
-[documentation](DOCUMENTATION.md)
+[technical documentation](docs/TECHNICAL_DOCUMENTATION.md)
 page.
 
 You can open issues using [klogg issues page](https://github.com/ZEACENT/klogg/issues)

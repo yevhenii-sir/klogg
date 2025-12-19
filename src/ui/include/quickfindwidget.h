@@ -67,7 +67,7 @@ class QuickFindWidget : public QWidget
 
   public Q_SLOTS:
     // Instructs the widget to change the pattern displayed
-    void changeDisplayedPattern( const QString& newPattern, bool isRegex );
+    void changeDisplayedPattern( const QString& newPattern, bool ignoreCase, bool isRegex, bool isWholeWord );
 
     // Show the widget for a notification (will timeout)
     void notify( const QFNotification& message );
@@ -82,13 +82,13 @@ class QuickFindWidget : public QWidget
     void notificationTimeout();
     void textChanged();
 
-  Q_SIGNALS:
+    Q_SIGNALS:
     // Sent when Return is pressed to confirm the pattern
     // (pattern and ignor_case flag)
-    void patternConfirmed( const QString&, bool, bool );
+    void patternConfirmed( const QString&, bool, bool, bool );
     // Sent every time the pattern is modified
     // (pattern and ignor_case flag)
-    void patternUpdated( const QString&, bool, bool );
+    void patternUpdated( const QString&, bool, bool, bool );
     void close();
     // Emitted when the user closes the window
     void cancelSearch();
@@ -104,11 +104,15 @@ class QuickFindWidget : public QWidget
     QToolButton* previousButton_;
     QLineEdit*   editQuickFind_;
     QCheckBox*   ignoreCaseCheck_;
+    QCheckBox*   matchWholeWordCheck_;
+    QCheckBox*   useRegexpCheck_;
     QLabel*      notificationText_;
 
     QToolButton* setupToolButton(const QString &text, const QString &icon);
     bool isIgnoreCase() const;
     bool isRegexSearch() const;
+    bool isWholeWord() const;
+
 
     QTimer*      notificationTimer_;
 

@@ -95,19 +95,19 @@ class QuickFindMux : public QObject
     // forward.
     void setDirection( QFDirection direction );
 
-  Q_SIGNALS:
-    void patternChanged( const QString& );
+    Q_SIGNALS:
+    void patternChanged( const QString&, bool, bool, bool );
     void notify( const QFNotification& );
     void clearNotification();
 
   public Q_SLOTS:
     // Signal the current pattern must be altered (will start an incremental
     // search if the options are configured in such a way).
-    void setNewPattern( const QString& newPattern, bool ignoreCase, bool isRegexSearch );
+    void setNewPattern( const QString& newPattern, bool ignoreCase, bool isRegexSearch, bool isWholeWord );
 
     // Signal the current pattern must be altered and is confirmed
     // (will stop an incremental search if needed)
-    void confirmPattern( const QString& newPattern, bool ignoreCase, bool isRegexSearch );
+    void confirmPattern( const QString& newPattern, bool ignoreCase, bool isRegexSearch, bool isWholeWord );
 
     // Signal the user cancelled the search
     // (used for incremental only)

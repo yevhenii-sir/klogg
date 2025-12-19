@@ -96,10 +96,10 @@ class QuickFindPattern : public QObject {
 
     // Set the search to a new pattern, using the current
     // case status
-    void changeSearchPattern( const QString& pattern, bool isRegex = false );
+    void changeSearchPattern( const QString& pattern, bool isRegex = false, bool isWholeWord = false );
 
     // Set the search to a new pattern, as well as the case status
-    void changeSearchPattern( const QString& pattern, bool ignoreCase, bool isRegex );
+    void changeSearchPattern( const QString& pattern, bool ignoreCase, bool isRegex, bool isWholeWord );
 
     // Returns whether the search is active (i.e. valid and non empty regexp)
     bool isActive() const
@@ -113,6 +113,21 @@ class QuickFindPattern : public QObject {
         return pattern_;
     }
 
+    bool isRegex() const
+    {
+        return isRegex_;
+    }
+
+    bool isWholeWord() const
+    {
+        return isWholeWord_;
+    }
+
+    bool isCaseSensitive() const
+    {
+        return isCaseSensitive_;
+    }
+    
     // Returns whether the passed line match the quick find search.
     // If so, it populate the passed list with the list of matches
     // within this particular line.
@@ -128,6 +143,10 @@ class QuickFindPattern : public QObject {
     bool active_ = false;
     QRegularExpression regexp_;
     QString pattern_;
+    
+    bool isRegex_ = false;
+    bool isWholeWord_ = false;
+    bool isCaseSensitive_ = false;
 };
 
 #endif

@@ -81,6 +81,14 @@ QuickFindWidget::QuickFindWidget( QWidget* parent )
     ignoreCaseCheck_->setChecked( Configuration::get().qfIgnoreCase() );
     layout->addWidget( ignoreCaseCheck_ );
 
+    matchWholeWordCheck_ = new QCheckBox( "Whole &word" );
+    matchWholeWordCheck_->setChecked( false ); // TODO: persist in config?
+    layout->addWidget( matchWholeWordCheck_ );
+
+    useRegexpCheck_ = new QCheckBox( "Re&gex" );
+    useRegexpCheck_->setChecked( Configuration::get().quickfindRegexpType() == SearchRegexpType::ExtendedRegexp );
+    layout->addWidget( useRegexpCheck_ );
+
     previousButton_
         = setupToolButton( QLatin1String( "Previous" ), QLatin1String( ":/images/arrowup.png" ) );
     previousButton_->setShortcut( QKeySequence::FindPrevious );
@@ -117,6 +125,25 @@ QuickFindWidget::QuickFindWidget( QWidget* parent )
         Configuration::get().save();
     } );
 
+#if ( QT_VERSION >= QT_VERSION_CHECK( 6, 7, 0 ) )
+    connect( matchWholeWordCheck_, &QCheckBox::checkStateChanged, this, [ this ] {
+        textChanged();
+    } );
+
+    connect( useRegexpCheck_, &QCheckBox::checkStateChanged, this, [ this ] {
+        textChanged();
+        // Configuration::get().setQuickfindRegexpType(...); // Optional: persist
+    } );
+#else
+    connect( matchWholeWordCheck_, &QCheckBox::stateChanged, this, [ this ] {
+        textChanged();
+    } );
+
+    connect( useRegexpCheck_, &QCheckBox::stateChanged, this, [ this ] {
+        textChanged();
+    } );
+#endif
+
     connect( previousButton_, &QToolButton::clicked, this, &QuickFindWidget::doSearchBackward );
     connect( nextButton_, &QToolButton::clicked, this, &QuickFindWidget::doSearchForward );
 
@@ -138,12 +165,24 @@ void QuickFindWidget::userActivate()
 // Q_SLOTS:
 //
 
-void QuickFindWidget::changeDisplayedPattern( const QString& newPattern, bool isRegex )
+void QuickFindWidget::changeDisplayedPattern( const QString& newPattern, bool ignoreCase, bool isRegex, bool isWholeWord )
 {
-    auto pattern
-        = ( !isRegex && isRegexSearch() ) ? QRegularExpression::escape( newPattern ) : newPattern;
-    editQuickFind_->setText( pattern );
+    // pattern is raw text here
+    editQuickFind_->setText( newPattern );
     editQuickFind_->setCursorPosition( patternCursorPosition_ );
+    
+    // Update checkboxes without triggering signals loop
+    bool oldState = ignoreCaseCheck_->blockSignals(true);
+    ignoreCaseCheck_->setChecked(ignoreCase);
+    ignoreCaseCheck_->blockSignals(oldState);
+    
+    oldState = useRegexpCheck_->blockSignals(true);
+    useRegexpCheck_->setChecked(isRegex);
+    useRegexpCheck_->blockSignals(oldState);
+    
+    oldState = matchWholeWordCheck_->blockSignals(true);
+    matchWholeWordCheck_->setChecked(isWholeWord);
+    matchWholeWordCheck_->blockSignals(oldState);
 }
 
 void QuickFindWidget::notify( const QFNotification& message )
@@ -171,7 +210,7 @@ void QuickFindWidget::doSearchForward()
     // the widget to stay visible.
     userRequested_ = true;
 
-    Q_EMIT patternConfirmed( editQuickFind_->text(), isIgnoreCase(), isRegexSearch() );
+    Q_EMIT patternConfirmed( editQuickFind_->text(), isIgnoreCase(), isRegexSearch(), isWholeWord() );
     Q_EMIT searchForward();
 }
 
@@ -184,7 +223,7 @@ void QuickFindWidget::doSearchBackward()
     // the widget to stay visible.
     userRequested_ = true;
 
-    Q_EMIT patternConfirmed( editQuickFind_->text(), isIgnoreCase(), isRegexSearch() );
+    Q_EMIT patternConfirmed( editQuickFind_->text(), isIgnoreCase(), isRegexSearch(), isWholeWord() );
     Q_EMIT searchBackward();
 }
 
@@ -213,7 +252,7 @@ void QuickFindWidget::notificationTimeout()
 void QuickFindWidget::textChanged()
 {
     patternCursorPosition_ = editQuickFind_->cursorPosition();
-    Q_EMIT patternUpdated( editQuickFind_->text(), isIgnoreCase(), isRegexSearch() );
+    Q_EMIT patternUpdated( editQuickFind_->text(), isIgnoreCase(), isRegexSearch(), isWholeWord() );
 }
 
 //
@@ -244,5 +283,10 @@ bool QuickFindWidget::isIgnoreCase() const
 
 bool QuickFindWidget::isRegexSearch() const
 {
-    return ( Configuration::get().quickfindRegexpType() == SearchRegexpType::ExtendedRegexp );
+    return ( useRegexpCheck_->checkState() == Qt::Checked );
+}
+
+bool QuickFindWidget::isWholeWord() const
+{
+    return ( matchWholeWordCheck_->checkState() == Qt::Checked );
 }

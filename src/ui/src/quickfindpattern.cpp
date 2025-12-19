@@ -99,22 +99,24 @@ std::pair<LineColumn, LineColumn> QuickFindMatcher::getLastMatch() const
     return std::make_pair( lastMatchStart_, lastMatchEnd_ );
 }
 
-void QuickFindPattern::changeSearchPattern( const QString& pattern, bool isRegex )
+void QuickFindPattern::changeSearchPattern( const QString& pattern, bool isRegex, bool isWholeWord )
 {
-    // Determine the type of regexp depending on the config
-    const auto searchType = Configuration::get().quickfindRegexpType();
-    switch ( searchType ) {
-    case SearchRegexpType::ExtendedRegexp:
-        pattern_ = isRegex ? pattern : QRegularExpression::escape( pattern );
-        break;
-    default:
-        pattern_ = pattern;
-        break;
+    pattern_ = pattern;
+    isRegex_ = isRegex;
+    isWholeWord_ = isWholeWord;
+
+    QString regexPattern;
+    if ( isRegex ) {
+        regexPattern = pattern;
+    } else {
+        regexPattern = QRegularExpression::escape( pattern );
     }
 
-    regexp_.setPattern( searchType == SearchRegexpType::ExtendedRegexp
-                            ? pattern_
-                            : QRegularExpression::escape( pattern_ ) );
+    if ( isWholeWord ) {
+        regexPattern = "\\b" + regexPattern + "\\b";
+    }
+
+    regexp_.setPattern( regexPattern );
 
     if ( regexp_.isValid() && ( !pattern_.isEmpty() ) )
         active_ = true;
@@ -124,15 +126,17 @@ void QuickFindPattern::changeSearchPattern( const QString& pattern, bool isRegex
     Q_EMIT patternUpdated();
 }
 
-void QuickFindPattern::changeSearchPattern( const QString& pattern, bool ignoreCase, bool isRegex )
+void QuickFindPattern::changeSearchPattern( const QString& pattern, bool ignoreCase, bool isRegex, bool isWholeWord )
 {
     QRegularExpression::PatternOptions options = QRegularExpression::UseUnicodePropertiesOption;
 
     if ( ignoreCase )
         options |= QRegularExpression::CaseInsensitiveOption;
 
+    isCaseSensitive_ = !ignoreCase;
+
     regexp_.setPatternOptions( options );
-    changeSearchPattern( pattern, isRegex );
+    changeSearchPattern( pattern, isRegex, isWholeWord );
 }
 
 bool QuickFindPattern::matchLine( const QString& line,
