@@ -207,12 +207,12 @@ class LogFilteredData : public AbstractLogData {
     mutable klogg::vector<LineNumber> contextLinesList_;
     mutable bool contextLinesListValid_ = false;
 
-    LogFilteredDataWorker workerThread_;
-
     Mutex searchProgressMutex_;
     std::tuple<LinesCount, int, LineNumber> searchProgress_;
 
     KDToolBox::KDSignalThrottler searchProgressThrottler_;
+
+    LogFilteredDataWorker workerThread_;
 
   private:
     struct CachedSearchResult {

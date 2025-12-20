@@ -94,29 +94,23 @@ See `.github/workflows/ci-build.yml` for more information on build process.
 
 ### Building on Windows
 
-Install Microsoft Visual Studio 2017 or 2019 with C++ support.
-Community edition can be downloaded from [Microsoft](https://visualstudio.microsoft.com/vs/).
+Install Microsoft Visual Studio 2022 with C++ support (Community edition is fine).
+Note: Qt 6.10+ binaries are built with MSVC 2022.
 
 Intall latest Qt version using [online installer](https://www.qt.io/download-qt-installer).
 Make sure to select version matching Visual Studio installation. 64-bit libraries are recommended.
 
 Install CMake from [Kitware](https://cmake.org/download/).
-Use version 3.14 or later for Visual Studio 2019 support.
+Use version 3.14 or later.
 
 Download the Boost source code from http://www.boost.org/users/download/.
 Extract to some folder. Directory structure should be something like `C:\Boost\boost_1_63_0`.
 Then add `BOOST_ROOT` environment variable pointing to main directory of Boost sources so CMake is able to fine it.
 
-Prepare build environment for CMake. Open command prompt window and depending on version of Visual Studio run either
+Prepare build environment for CMake. Open command prompt window and run:
 
 ```
-call "%ProgramFiles(x86)%\Microsoft Visual Studio\2019\Community\Common7\Tools\vsdevcmd" -arch=x64
-```
-
-or
-
-```
-call "%ProgramFiles(x86)%\Microsoft Visual Studio\2017\Community\Common7\Tools\vsdevcmd" -arch=x64
+call "%ProgramFiles%\Microsoft Visual Studio\2022\Community\Common7\Tools\vsdevcmd" -arch=x64
 ```
 
 Next setup Qt paths:
@@ -137,7 +131,7 @@ Configure klogg solution (use CMake generator matching Visual Studio version):
 cd <path_to_project_root>
 md build_root
 cd build_root
-cmake -G "Visual Studio 16 2019 Win64" -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
+cmake -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
 ```
 
 CMake should generate `klogg.sln` file in `<path_to_project_root>\build_root` directory. Open solution and build it.
@@ -191,7 +185,7 @@ brew install cmake ninja qt@6 boost ragel
 **Notes:**
 - `cmake`: Build system generator (requires version 3.12 or later)
 - `ninja`: Fast build tool
-- `qt@6`: Qt 6 libraries (project supports Qt 5.9+ or Qt 6, CI uses Qt 6.7.3)
+- `qt@6`: Qt 6 libraries (project supports Qt 5.9+ or Qt 6, CI uses Qt 6.9.3)
 - `boost`: Boost C++ libraries (header-only part, for Hyperscan)
 - `ragel`: Ragel state machine compiler (version 6.8 or later, for Hyperscan)
 

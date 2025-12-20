@@ -54,7 +54,7 @@ set(PROJECT_HOMEPAGE_URL "https://github.com/ZEACENT/klogg")
 
 string(TIMESTAMP PRODUCT_CURRENT_YEAR "%Y")
 set(COMPANY "Anton Filimonov")
-set(COPYRIGHT "Copyright (c) ${PRODUCT_CURRENT_YEAR} Nicolas Bonnefon, Anton Filimonov and other contributors.")
+set(COPYRIGHT "Copyright (c) 2020-${PRODUCT_CURRENT_YEAR} ZEACENT, Nicolas Bonnefon, Anton Filimonov and other contributors.")
 set(IDENTIFIER "com.github.variar.klogg")
 set(PROJECT_DESCRIPTION "${PROJECT_NAME} log viewer")
 

@@ -24,6 +24,7 @@
 
 QLatin1String kloggVersion();
 QLatin1String kloggBuildDate();
+QLatin1String kloggBuildYear();
 QLatin1String kloggCommit();
 QLatin1String kloggGitVersion();
 

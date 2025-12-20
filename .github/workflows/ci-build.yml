@@ -149,14 +149,14 @@ jobs:
       matrix:
         config:
           - os: macos-15-intel
-            qt_version: 6.7.3
+            qt_version: 6.9.3
             qt_arch: clang_64
             qt_modules: qt5compat
             arch: x64
             artifacts_id: macos-intel-qt6
             cmake_opts: -DKLOGG_OSX_DEPLOYMENT_TARGET=15.0
           - os: macos-latest
-            qt_version: 6.7.3
+            qt_version: 6.9.3
             qt_arch: clang_64
             qt_modules: qt5compat
             arch: arm64
@@ -221,9 +221,9 @@ jobs:
         config:
           - os: windows
             os_version: 2022
-            qt_version: 6.7.3
+            qt_version: 6.9.3
             qt_modules: qt5compat
-            qt_arch: win64_msvc2019_64
+            qt_arch: win64_msvc2022_64
             arch: x64
             ssl_arch: -x64
             cmake_opts:
@@ -292,6 +292,28 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.KLOGG_GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Changelog
+        id: changelog
+        shell: bash
+        run: |
+          # Find the last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            echo "No previous tag found. Generating log from start."
+            CHANGELOG=$(git log --pretty=format:"* %s (%h)")
+          else
+            echo "Generating changelog since $LAST_TAG"
+            CHANGELOG=$(git log --pretty=format:"* %s (%h)" ${LAST_TAG}..HEAD)
+          fi
+          
+          # Escape newlines for GITHUB_ENV
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "CHANGELOG<<$EOF" >> $GITHUB_ENV
+          echo "$CHANGELOG" >> $GITHUB_ENV
+          echo "$EOF" >> $GITHUB_ENV
       
       - name: Download version artifact
         uses: actions/download-artifact@v4
@@ -338,6 +360,9 @@ jobs:
             Continuous build ${{ env.KLOGG_VERSION }}
             
             This is an automated pre-release build. For stable releases, see [releases](https://github.com/ZEACENT/klogg/releases).
+
+            ## Changes
+            ${{ env.CHANGELOG }}
           prerelease: true
           files: |
             ./packages-all/**/*

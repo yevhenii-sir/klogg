@@ -16,6 +16,29 @@ jobs:
       DISCORD_NEW_VERSIONS_WEBHOOK: ${{ secrets.DISCORD_NEW_VERSIONS_WEBHOOK }}
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Generate Changelog
+      id: changelog
+      shell: bash
+      run: |
+        # Find the last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        if [ -z "$LAST_TAG" ]; then
+          echo "No previous tag found. Generating log from start."
+          CHANGELOG=$(git log --pretty=format:"* %s (%h)")
+        else
+          echo "Generating changelog since $LAST_TAG"
+          CHANGELOG=$(git log --pretty=format:"* %s (%h)" ${LAST_TAG}..HEAD)
+        fi
+        
+        # Escape newlines for GITHUB_ENV
+        EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+        echo "CHANGELOG<<$EOF" >> $GITHUB_ENV
+        echo "$CHANGELOG" >> $GITHUB_ENV
+        echo "$EOF" >> $GITHUB_ENV
+
     - name: Download artifacts for last successful CI workflow
       if: ${{ !github.event.inputs.ci-run-id }}
       uses: dawidd6/action-download-artifact@v2
@@ -209,6 +232,9 @@ jobs:
         name: Release v${{ env.KLOGG_VERSION }}
         body: |
           Release v${{ env.KLOGG_VERSION }}
+          
+          ## Changes
+          ${{ env.CHANGELOG }}
           
           ## Downloads
           - **Windows**: See [Windows packages](#windows)

@@ -31,6 +31,11 @@ QLatin1String kloggBuildDate()
     return QLatin1String( KLOGG_DATE );
 }
 
+QLatin1String kloggBuildYear()
+{
+    return QLatin1String( KLOGG_YEAR );
+}
+
 QLatin1String kloggCommit()
 {
     return QLatin1String( KLOGG_COMMIT );

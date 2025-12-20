@@ -120,6 +120,8 @@ cpmaddpackage(
   f546bf6ae66a8d34b43da5a41afcfbf4e1a47906
   EXCLUDE_FROM_ALL
   YES
+  PATCH_COMMAND
+  git apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/fix_karchive_qt6.patch"
 )
 if(NOT KF5Archive_ADDED)
   find_package(KF5Archive)
