@@ -181,7 +181,7 @@ LogFilteredDataWorker::~LogFilteredDataWorker() noexcept
 {
     try {
         interruptRequested_.set();
-        ScopedLock locker( operationsMutex_ );
+        operationsPool_.clear();
         operationsPool_.waitForDone();
         LOG_INFO << "LogFilteredDataWorker shutdown";
     } catch ( const std::exception& e ) {

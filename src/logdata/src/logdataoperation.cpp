@@ -48,8 +48,7 @@ void AttachOperation::doStart( LogDataWorker& workerThread ) const
     const auto defaultEncodingMib = Configuration::get().defaultEncodingMib();
     LOG_INFO << "Attaching " << filename_ << ", encoding " << defaultEncodingMib;
     workerThread.attachFile( filename_ );
-    workerThread.indexAll( defaultEncodingMib >= 0 ? QTextCodec::codecForMib( defaultEncodingMib )
-                                                   : nullptr );
+    workerThread.indexAll();
 }
 
 void FullReindexOperation::doStart( LogDataWorker& workerThread ) const
@@ -90,8 +89,13 @@ void OperationQueue::interrupt()
 
 void OperationQueue::shutdown()
 {
-    ScopedLock guard( mutex_ );
-    if ( auto worker = std::move( worker_ ) ) {
+    std::unique_ptr<LogDataWorker> worker;
+    {
+        ScopedLock guard( mutex_ );
+        worker = std::move( worker_ );
+    }
+
+    if ( worker ) {
         worker->interrupt();
     }
 

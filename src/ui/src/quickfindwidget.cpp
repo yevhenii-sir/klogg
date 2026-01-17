@@ -38,8 +38,12 @@
 
 #include "log.h"
 
+#include <limits>
+#include <QCompleter>
+#include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QStringListModel>
 #include <QToolButton>
 #include <qcheckbox.h>
 #include <qkeysequence.h>
@@ -48,6 +52,7 @@
 
 #include "configuration.h"
 #include "qfnotifications.h"
+#include "savedsearches.h"
 
 #include "quickfindwidget.h"
 
@@ -72,9 +77,14 @@ QuickFindWidget::QuickFindWidget( QWidget* parent )
     closeButton_->setShortcut( QKeySequence::Cancel );
     layout->addWidget( closeButton_ );
 
-    editQuickFind_ = new QLineEdit( this );
-    // FIXME: set MinimumSize might be to constraining
+    searchLineCompleter_ = new QCompleter( SavedSearches::getSynced().recentSearches(), this );
+    editQuickFind_ = new QComboBox( this );
+    editQuickFind_->setEditable( true );
+    editQuickFind_->setCompleter( searchLineCompleter_ );
+    editQuickFind_->addItems( SavedSearches::getSynced().recentSearches() );
+    // FIXME: set MinimumSize might be too constraining
     editQuickFind_->setMinimumSize( QSize( 150, 0 ) );
+    editQuickFind_->lineEdit()->setMaxLength( std::numeric_limits<int>::max() / 1024 );
     layout->addWidget( editQuickFind_ );
 
     ignoreCaseCheck_ = new QCheckBox( "Ignore &case" );
@@ -109,8 +119,10 @@ QuickFindWidget::QuickFindWidget( QWidget* parent )
 
     // Behaviour
     connect( closeButton_, &QToolButton::clicked, this, &QuickFindWidget::closeHandler );
-    connect( editQuickFind_, &QLineEdit::textEdited, this, &QuickFindWidget::textChanged );
-    connect( editQuickFind_, &QLineEdit::returnPressed, this, &QuickFindWidget::returnHandler );
+    connect( editQuickFind_->lineEdit(), &QLineEdit::textEdited, this,
+             &QuickFindWidget::textChanged );
+    connect( editQuickFind_->lineEdit(), &QLineEdit::returnPressed, this,
+             &QuickFindWidget::returnHandler );
 
 // Qt compatibility:
 // - QCheckBox::stateChanged exists in Qt5 and Qt6.
@@ -155,10 +167,11 @@ QuickFindWidget::QuickFindWidget( QWidget* parent )
 
 void QuickFindWidget::userActivate()
 {
+    updateSearchHistory();
     userRequested_ = true;
     QWidget::show();
-    editQuickFind_->setFocus( Qt::ShortcutFocusReason );
-    editQuickFind_->selectAll();
+    editQuickFind_->lineEdit()->setFocus( Qt::ShortcutFocusReason );
+    editQuickFind_->lineEdit()->selectAll();
 }
 
 //
@@ -168,8 +181,8 @@ void QuickFindWidget::userActivate()
 void QuickFindWidget::changeDisplayedPattern( const QString& newPattern, bool ignoreCase, bool isRegex, bool isWholeWord )
 {
     // pattern is raw text here
-    editQuickFind_->setText( newPattern );
-    editQuickFind_->setCursorPosition( patternCursorPosition_ );
+    editQuickFind_->setEditText( newPattern );
+    editQuickFind_->lineEdit()->setCursorPosition( patternCursorPosition_ );
     
     // Update checkboxes without triggering signals loop
     bool oldState = ignoreCaseCheck_->blockSignals(true);
@@ -210,7 +223,8 @@ void QuickFindWidget::doSearchForward()
     // the widget to stay visible.
     userRequested_ = true;
 
-    Q_EMIT patternConfirmed( editQuickFind_->text(), isIgnoreCase(), isRegexSearch(), isWholeWord() );
+    recordSearchHistory( editQuickFind_->currentText() );
+    Q_EMIT patternConfirmed( editQuickFind_->currentText(), isIgnoreCase(), isRegexSearch(), isWholeWord() );
     Q_EMIT searchForward();
 }
 
@@ -223,7 +237,8 @@ void QuickFindWidget::doSearchBackward()
     // the widget to stay visible.
     userRequested_ = true;
 
-    Q_EMIT patternConfirmed( editQuickFind_->text(), isIgnoreCase(), isRegexSearch(), isWholeWord() );
+    recordSearchHistory( editQuickFind_->currentText() );
+    Q_EMIT patternConfirmed( editQuickFind_->currentText(), isIgnoreCase(), isRegexSearch(), isWholeWord() );
     Q_EMIT searchBackward();
 }
 
@@ -251,8 +266,31 @@ void QuickFindWidget::notificationTimeout()
 
 void QuickFindWidget::textChanged()
 {
-    patternCursorPosition_ = editQuickFind_->cursorPosition();
-    Q_EMIT patternUpdated( editQuickFind_->text(), isIgnoreCase(), isRegexSearch(), isWholeWord() );
+    patternCursorPosition_ = editQuickFind_->lineEdit()->cursorPosition();
+    Q_EMIT patternUpdated( editQuickFind_->currentText(), isIgnoreCase(), isRegexSearch(),
+                           isWholeWord() );
+}
+
+void QuickFindWidget::updateSearchHistory()
+{
+    const auto currentText = editQuickFind_->currentText();
+    const auto history = SavedSearches::getSynced().recentSearches();
+
+    editQuickFind_->blockSignals( true );
+    editQuickFind_->clear();
+    editQuickFind_->addItems( history );
+    editQuickFind_->setEditText( currentText );
+    editQuickFind_->blockSignals( false );
+
+    searchLineCompleter_->setModel( new QStringListModel( history, searchLineCompleter_ ) );
+}
+
+void QuickFindWidget::recordSearchHistory( const QString& text )
+{
+    auto& searches = SavedSearches::getSynced();
+    searches.addRecent( text );
+    searches.save();
+    updateSearchHistory();
 }
 
 //

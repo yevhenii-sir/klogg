@@ -63,7 +63,7 @@ LogData::LogData()
     : AbstractLogData()
     , indexing_data_( std::make_shared<IndexingData>() )
     , operationQueue_( [ this ] { attached_file_->attachReader(); } )
-    , codec_( QTextCodec::codecForName( "ISO-8859-1" ) )
+    , codec_( QTextCodec::codecForName( "UTF-8" ) )
 {
     // Initialise the file watcher
     connect( &FileWatcher::getFileWatcher(), &FileWatcher::fileChanged, this,

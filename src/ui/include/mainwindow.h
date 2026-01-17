@@ -149,10 +149,6 @@ class MainWindow : public QMainWindow {
     void lineNumberHandler( LineNumber startLine, LinesCount nLines, LineColumn startCol,
                             LineLength nSymbols );
 
-    // Save current search in line edit as predefined filter.
-    // Opens dialog with new entry.
-    void newPredefinedFilterHandler( QString newFilter );
-
     // Instructs the widget to update the loading progress gauge
     void updateLoadingProgress( int progress );
     // Instructs the widget to display the 'normal' status bar,

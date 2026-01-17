@@ -1,0 +1,39 @@
+if( NOT DEFINED PATCH_FILE )
+  message( FATAL_ERROR "PATCH_FILE is required" )
+endif()
+
+if( NOT DEFINED REPO_DIR )
+  set( REPO_DIR "." )
+endif()
+
+execute_process(
+  COMMAND git apply --check "${PATCH_FILE}"
+  WORKING_DIRECTORY "${REPO_DIR}"
+  RESULT_VARIABLE patch_check_result
+)
+
+if( patch_check_result EQUAL 0 )
+  execute_process(
+    COMMAND git apply "${PATCH_FILE}"
+    WORKING_DIRECTORY "${REPO_DIR}"
+    RESULT_VARIABLE patch_apply_result
+  )
+  if( NOT patch_apply_result EQUAL 0 )
+    message( FATAL_ERROR "Failed to apply patch: ${PATCH_FILE}" )
+  endif()
+  message( STATUS "Applied patch: ${PATCH_FILE}" )
+  return()
+endif()
+
+execute_process(
+  COMMAND git apply --reverse --check "${PATCH_FILE}"
+  WORKING_DIRECTORY "${REPO_DIR}"
+  RESULT_VARIABLE patch_reverse_check_result
+)
+
+if( patch_reverse_check_result EQUAL 0 )
+  message( STATUS "Patch already applied: ${PATCH_FILE}" )
+  return()
+endif()
+
+message( WARNING "Skipping patch (context mismatch): ${PATCH_FILE}" )

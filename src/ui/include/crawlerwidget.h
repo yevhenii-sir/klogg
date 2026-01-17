@@ -168,8 +168,6 @@ class CrawlerWidget : public QSplitter,
     // Sent up when the current line number is updated
     void newSelection( LineNumber startLine, LinesCount nLines, LineColumn startCol,
                        LineLength nSymbols );
-    // Sent up when user wants to save new predefined filter from current search
-    void saveCurrentSearchAsPredefinedFilter( QString newFilter );
 
     void sendToScratchpad( QString );
     void replaceDataInScratchpad( QString );
@@ -248,8 +246,8 @@ class CrawlerWidget : public QSplitter,
     void clearSearchHistory();
     void editSearchHistory();
 
-    // Save current search as predefined filter
-    void saveAsPredefinedFilter();
+    // Save current search as a favorite filter
+    void saveAsFavorite();
     void setSearchPatternFromPredefinedFilters( const QList<PredefinedFilter>& filters );
 
     // Search Context Menu
@@ -394,6 +392,7 @@ class CrawlerWidget : public QSplitter,
     QToolButton* clearButton_;
     QToolButton* searchButton_;
     QToolButton* keepSearchResultsButton_;
+    QToolButton* favoriteFilterButton_;
     QToolButton* stopButton_;
 
     QToolButton* matchCaseButton_;

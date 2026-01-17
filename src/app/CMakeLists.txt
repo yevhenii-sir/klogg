@@ -99,6 +99,8 @@ if(WIN32)
   target_sources(klogg_grep PRIVATE ${ProductVersionResourceFiles})
 
 elseif(APPLE)
+  set_target_properties(klogg PROPERTIES SKIP_INSTALL_RPATH ON)
+  set_target_properties(klogg_portable PROPERTIES SKIP_INSTALL_RPATH ON)
   set_source_files_properties(${ICON_FILE} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
   set_source_files_properties(${NOTICE_FILE} PROPERTIES MACOSX_PACKAGE_LOCATION SharedSupport)
   set_source_files_properties(${COPYING_FILE} PROPERTIES MACOSX_PACKAGE_LOCATION SharedSupport)

@@ -191,7 +191,7 @@ LogDataWorker::~LogDataWorker() noexcept
 {
     try {
         interruptRequest_.set();
-        ScopedLock locker( operationsMutex_ );
+        operationsPool_.clear();
         operationsPool_.waitForDone();
         LOG_INFO << "LogDataWorker shutdown";
     } catch ( const std::exception& e ) {
@@ -619,7 +619,15 @@ void IndexOperation::doIndex( OffsetInFile initialPosition )
         IndexingData::MutateAccessor scopedAccessor{ indexing_data_.get() };
 
         scopedAccessor.clear();
-        scopedAccessor.setEncodingGuess( QTextCodec::codecForLocale() );
+        QTextCodec* fallbackCodec = nullptr;
+        const auto defaultEncodingMib = Configuration::get().defaultEncodingMib();
+        if ( defaultEncodingMib >= 0 ) {
+            fallbackCodec = QTextCodec::codecForMib( defaultEncodingMib );
+        }
+        if ( !fallbackCodec ) {
+            fallbackCodec = QTextCodec::codecForName( "UTF-8" );
+        }
+        scopedAccessor.setEncodingGuess( fallbackCodec );
 
         scopedAccessor.setProgress( 100 );
         Q_EMIT indexingProgressed( 100 );
@@ -742,7 +750,15 @@ void IndexOperation::doIndex( OffsetInFile initialPosition )
     }
 
     if ( !scopedAccessor.getEncodingGuess() ) {
-        scopedAccessor.setEncodingGuess( QTextCodec::codecForLocale() );
+        QTextCodec* fallbackCodec = nullptr;
+        const auto defaultEncodingMib = Configuration::get().defaultEncodingMib();
+        if ( defaultEncodingMib >= 0 ) {
+            fallbackCodec = QTextCodec::codecForMib( defaultEncodingMib );
+        }
+        if ( !fallbackCodec ) {
+            fallbackCodec = QTextCodec::codecForName( "UTF-8" );
+        }
+        scopedAccessor.setEncodingGuess( fallbackCodec );
     }
 }
 

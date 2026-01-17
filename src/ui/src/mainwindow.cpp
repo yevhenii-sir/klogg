@@ -166,9 +166,6 @@ MainWindow::MainWindow( WindowSession session )
     signalMux_.connect(
         SIGNAL( newSelection( LineNumber, LinesCount, LineColumn, LineLength ) ), this,
         SLOT( lineNumberHandler( LineNumber, LinesCount, LineColumn, LineLength ) ) );
-    signalMux_.connect( SIGNAL( saveCurrentSearchAsPredefinedFilter( QString ) ), this,
-                        SLOT( newPredefinedFilterHandler( QString ) ) );
-
     signalMux_.connect( SIGNAL( sendToScratchpad( QString ) ), this,
                         SLOT( sendToScratchpad( QString ) ) );
 
@@ -1399,11 +1396,6 @@ void MainWindow::lineNumberHandler( LineNumber startLine, LinesCount nLines, Lin
     else {
         lineNbField->clear();
     }
-}
-
-void MainWindow::newPredefinedFilterHandler( QString newFilter )
-{
-    editPredefinedFilters( newFilter );
 }
 
 void MainWindow::updateLoadingProgress( int progress )

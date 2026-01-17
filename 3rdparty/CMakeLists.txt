@@ -121,7 +121,10 @@ cpmaddpackage(
   EXCLUDE_FROM_ALL
   YES
   PATCH_COMMAND
-  git apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/fix_karchive_qt6.patch"
+  ${CMAKE_COMMAND}
+  -DREPO_DIR=.
+  -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/patches/fix_karchive_qt6.patch
+  -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/apply_git_patch.cmake
 )
 if(NOT KF5Archive_ADDED)
   find_package(KF5Archive)
@@ -416,5 +419,4 @@ foreach(target ${klogg_cpm_targets})
     set_property(TARGET ${target} PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES ${${target}_include_dirs})
   endif()
 endforeach()
-
 

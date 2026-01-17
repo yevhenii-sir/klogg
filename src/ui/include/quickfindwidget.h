@@ -43,7 +43,8 @@
 #include <QTimer>
 
 class QHBoxLayout;
-class QLineEdit;
+class QComboBox;
+class QCompleter;
 class QToolButton;
 class QLabel;
 class QCheckBox;
@@ -97,12 +98,16 @@ class QuickFindWidget : public QWidget
     void searchNext();
 
   private:
+    void updateSearchHistory();
+    void recordSearchHistory( const QString& text );
+
     QHBoxLayout* layout_;
 
     QToolButton* closeButton_;
     QToolButton* nextButton_;
     QToolButton* previousButton_;
-    QLineEdit*   editQuickFind_;
+    QComboBox*   editQuickFind_;
+    QCompleter*  searchLineCompleter_;
     QCheckBox*   ignoreCaseCheck_;
     QCheckBox*   matchWholeWordCheck_;
     QCheckBox*   useRegexpCheck_;

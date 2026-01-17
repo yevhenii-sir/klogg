@@ -148,6 +148,11 @@ HsRegularExpression::HsRegularExpression( const RegularExpressionPattern& patter
 HsRegularExpression::HsRegularExpression( const klogg::vector<RegularExpressionPattern>& patterns )
     : patterns_( patterns )
 {
+    if ( patterns_.empty() ) {
+        isValid_ = true;
+        return;
+    }
+
     auto requiredInstructuins = CpuInstructions::SSE2;
     requiredInstructuins |= CpuInstructions::SSSE3;
 

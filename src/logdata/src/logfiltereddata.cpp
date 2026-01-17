@@ -90,7 +90,16 @@ LogFilteredData::LogFilteredData( const LogData* logData )
              &LogFilteredData::handleSearchProgressedThrottled );
 }
 
-LogFilteredData::~LogFilteredData() = default;
+LogFilteredData::~LogFilteredData()
+{
+    // Disconnect all signals to ensure no callbacks are invoked during destruction
+    disconnect( &searchProgressThrottler_, nullptr, this, nullptr );
+    disconnect( this, &LogFilteredData::searchProgressedThrottled, nullptr, nullptr );
+    disconnect( &workerThread_, nullptr, this, nullptr );
+    
+    // Interrupt any ongoing search operation
+    workerThread_.interrupt();
+}
 
 void LogFilteredData::runSearch( const RegularExpressionPattern& regExp )
 {

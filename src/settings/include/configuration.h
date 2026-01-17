@@ -547,7 +547,7 @@ class Configuration final : public Persistable<Configuration> {
     // Configuration settings
     mutable QFont mainFont_ = { "DejaVu Sans Mono", 10 };
     SearchRegexpType mainRegexpType_ = SearchRegexpType::ExtendedRegexp;
-    SearchRegexpType quickfindRegexpType_ = SearchRegexpType::FixedString;
+    SearchRegexpType quickfindRegexpType_ = SearchRegexpType::ExtendedRegexp;
     bool quickfindIncremental_ = true;
 
     QString language_{ "en" };
@@ -576,8 +576,8 @@ class Configuration final : public Persistable<Configuration> {
     ThemeMode themeMode_ = ThemeMode::Auto;
 
     // Default settings for new views
-    bool searchAutoRefresh_ = false;
-    bool searchIgnoreCase_ = false;
+    bool searchAutoRefresh_ = true;
+    bool searchIgnoreCase_ = true;
     bool searchLogicalCombining_ = false;
     QList<int> splitterSizes_;
 
@@ -611,7 +611,7 @@ class Configuration final : public Persistable<Configuration> {
 
     QColor qfBackColor_ = Qt::yellow;
     QColor mainSearchBackColor_ = Qt::lightGray;
-    bool enableMainSearchHighlight_ = false;
+    bool enableMainSearchHighlight_ = true;
     bool enableMainSearchHighlightVariance_ = false;
 
     bool allowFollowOnScroll_ = true;
@@ -621,9 +621,9 @@ class Configuration final : public Persistable<Configuration> {
 
     bool hideAnsiColorSequences_ = false;
 
-    int defaultEncodingMib_ = -1;
+    int defaultEncodingMib_ = 106; // UTF-8
 
-    bool qfIgnoreCase_ = false;
+    bool qfIgnoreCase_ = true;
 
     bool useTextWrap_ = false;
 

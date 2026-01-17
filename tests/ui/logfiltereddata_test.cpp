@@ -58,8 +58,7 @@ void runSearch( LogFilteredData* filtered_data, const QString& regexp,
                 SafeQSignalSpy& searchProgressSpy )
 {
 
-    QTimer::singleShot(
-        50, [filtered_data, regexp]() { filtered_data->runSearch( RegularExpressionPattern( regexp ) ); } );
+    filtered_data->runSearch( RegularExpressionPattern( regexp ) );
 
     int progress = 0;
     do {
@@ -71,7 +70,9 @@ void runSearch( LogFilteredData* filtered_data, const QString& regexp,
     // Wait a bit for any pending throttled signals to be processed.
     // This prevents a use-after-free crash when LogFilteredData is destroyed
     // while the searchProgressThrottler_ timer is still pending.
-    QTest::qWait( 150 );
+    // The throttler has a 100ms timeout, so we need to wait at least that long.
+    // Using 250ms provides extra margin for slow CI environments (especially Windows).
+    QTest::qWait( 250 );
 }
 
 } // namespace
@@ -91,6 +92,9 @@ struct LogDataLoader {
         static int counter = 0;
         counter++;
         LOG_INFO << "Test run " << counter;
+
+        auto& config = Configuration::getSynced();
+        config.setRegexpEnging( RegexpEngine::QRegularExpression );
 
         REQUIRE( generateDataFiles( file ) );
         SafeQSignalSpy loadEndSpy( &log_data, SIGNAL( loadingFinished( LoadingStatus ) ) );

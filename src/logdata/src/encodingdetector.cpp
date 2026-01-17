@@ -21,6 +21,7 @@
 
 #include <QTextCodec>
 
+#include "configuration.h"
 #include "containers.h"
 #include "log.h"
 #include <uchardet.h>
@@ -109,8 +110,17 @@ QTextCodec* EncodingDetector::detectEncoding( const klogg::vector<char>& block )
 
     QByteArray blockArray = QByteArray::fromRawData( block.data(), klogg::isize( block ) );
 
+    QTextCodec* fallbackCodec = nullptr;
+    const auto defaultEncodingMib = Configuration::get().defaultEncodingMib();
+    if ( defaultEncodingMib >= 0 ) {
+        fallbackCodec = QTextCodec::codecForMib( defaultEncodingMib );
+    }
+    if ( !fallbackCodec ) {
+        fallbackCodec = QTextCodec::codecForName( "UTF-8" );
+    }
+
     auto encodingGuess = uchardetCodec ? QTextCodec::codecForUtfText( blockArray, uchardetCodec )
-                                       : QTextCodec::codecForUtfText( blockArray );
+                                       : QTextCodec::codecForUtfText( blockArray, fallbackCodec );
 
     LOG_DEBUG << "Final encoding guess " << encodingGuess->name().constData();
 

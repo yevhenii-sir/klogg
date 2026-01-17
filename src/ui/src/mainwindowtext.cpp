@@ -93,9 +93,9 @@ const char* action::showScratchPadStatusTip = QT_TR_NOOP( "Show the scratchpad" 
 const char* action::addToFavoritesText = QT_TR_NOOP( "Add to favorites" );
 const char* action::removeFromFavoritesText = QT_TR_NOOP( "Remove from favorites..." );
 const char* action::selectOpenFileText = QT_TR_NOOP( "Switch to opened file..." );
-const char* action::predefinedFiltersDialogText = QT_TR_NOOP( "Predefined filters..." );
+const char* action::predefinedFiltersDialogText = QT_TR_NOOP( "Filter favorites..." );
 const char* action::predefinedFiltersDialogStatusTip
-    = QT_TR_NOOP( "Show dialog to configure filters" );
+    = QT_TR_NOOP( "Show dialog to manage filter favorites" );
 const char* action::autoEncodingText = QT_TR_NOOP( "Auto" );
 const char* action::autoEncodingStatusTip
     = QT_TR_NOOP( "Automatically detect the file's encoding" );

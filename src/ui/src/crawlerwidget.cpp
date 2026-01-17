@@ -73,6 +73,7 @@
 #include "fontutils.h"
 #include "infoline.h"
 #include "quickfindpattern.h"
+#include "predefinedfilters.h"
 #include "savedsearches.h"
 #include "shortcuts.h"
 
@@ -466,11 +467,39 @@ void CrawlerWidget::editSearchHistory()
     updateSearchCombo();
 }
 
-void CrawlerWidget::saveAsPredefinedFilter()
+void CrawlerWidget::saveAsFavorite()
 {
-    const auto currentText = searchLineEdit_->currentText();
+    const auto currentText = searchLineEdit_->currentText().trimmed();
+    if ( currentText.isEmpty() ) {
+        return;
+    }
 
-    Q_EMIT saveCurrentSearchAsPredefinedFilter( currentText );
+    bool ok = false;
+    const auto name = QInputDialog::getText( this, tr( "klogg" ), tr( "Favorite name:" ),
+                                             QLineEdit::Normal, currentText, &ok );
+    const auto trimmedName = name.trimmed();
+    if ( !ok || trimmedName.isEmpty() ) {
+        return;
+    }
+
+    auto filters = PredefinedFiltersCollection::getSynced().getFilters();
+    const auto useRegex = useRegexpButton_->isChecked();
+
+    auto existing = std::find_if(
+        filters.begin(), filters.end(), [ &trimmedName ]( const auto& filter ) {
+            return filter.name.compare( trimmedName, Qt::CaseInsensitive ) == 0;
+        } );
+
+    if ( existing != filters.end() ) {
+        existing->pattern = currentText;
+        existing->useRegex = useRegex;
+    }
+    else {
+        filters.push_back( { trimmedName, currentText, useRegex } );
+    }
+
+    PredefinedFiltersCollection::getSynced().saveToStorage( filters );
+    reloadPredefinedFilters();
 }
 
 void CrawlerWidget::showSearchContextMenu()
@@ -849,11 +878,16 @@ void CrawlerWidget::changeFilteredViewVisibility( int index )
 
 void CrawlerWidget::setSearchPatternFromPredefinedFilters( const QList<PredefinedFilter>& filters )
 {
-    QString searchPattern;
-    for ( const auto& filter : filters ) {
-        combinePatterns( searchPattern, escapeSearchPattern( filter.pattern, filter.useRegex ) );
+    if ( filters.isEmpty() ) {
+        return;
     }
-    setSearchPattern( searchPattern );
+
+    const auto& filter = filters.front();
+    if ( useRegexpButton_->isChecked() != filter.useRegex ) {
+        useRegexpButton_->setChecked( filter.useRegex );
+    }
+
+    setSearchPattern( escapeSearchPattern( filter.pattern, filter.useRegex ) );
 }
 
 QString CrawlerWidget::escapeSearchPattern( const QString& pattern, bool isRegex ) const
@@ -1094,11 +1128,11 @@ void CrawlerWidget::setup()
 
     QAction* clearSearchHistoryAction = new QAction( tr( "Clear search history" ), this );
     QAction* editSearchHistoryAction = new QAction( tr( "Edit search history" ), this );
-    QAction* saveAsPredefinedFilterAction = new QAction( tr( "Save as Filter" ), this );
+    QAction* addFavoriteFilterAction = new QAction( tr( "Add to favorites" ), this );
 
     searchLineContextMenu_ = searchLineEdit_->lineEdit()->createStandardContextMenu();
     searchLineContextMenu_->addSeparator();
-    searchLineContextMenu_->addAction( saveAsPredefinedFilterAction );
+    searchLineContextMenu_->addAction( addFavoriteFilterAction );
     searchLineContextMenu_->addSeparator();
     searchLineContextMenu_->addAction( editSearchHistoryAction );
     searchLineContextMenu_->addAction( clearSearchHistoryAction );
@@ -1130,6 +1164,11 @@ void CrawlerWidget::setup()
     stopButton_->setContentsMargins( 2, 2, 2, 2 );
 
     predefinedFilters_ = new PredefinedFiltersComboBox( this );
+    favoriteFilterButton_ = new QToolButton();
+    favoriteFilterButton_->setAutoRaise( true );
+    favoriteFilterButton_->setToolTip( tr( "Add current filter to favorites" ) );
+    favoriteFilterButton_->setFocusPolicy( Qt::NoFocus );
+    favoriteFilterButton_->setContentsMargins( 2, 2, 2, 2 );
 
     // Context lines controls
     contextLinesSpinBox_ = new QSpinBox();
@@ -1165,6 +1204,7 @@ void CrawlerWidget::setup()
     searchLineLayout->addWidget( booleanButton_ );
     searchLineLayout->addWidget( searchRefreshButton_ );
     searchLineLayout->addWidget( predefinedFilters_ );
+    searchLineLayout->addWidget( favoriteFilterButton_ );
     searchLineLayout->addWidget( searchLineEdit_ );
     searchLineLayout->addWidget( contextLinesSpinBox_ );
     searchLineLayout->addWidget( contextLinesComboBox_ );
@@ -1223,13 +1263,14 @@ void CrawlerWidget::setup()
 
     connect( searchLineEdit_, &QWidget::customContextMenuRequested, this,
              &CrawlerWidget::showSearchContextMenu );
-    connect( saveAsPredefinedFilterAction, &QAction::triggered, this,
-             &CrawlerWidget::saveAsPredefinedFilter );
+    connect( addFavoriteFilterAction, &QAction::triggered, this,
+             &CrawlerWidget::saveAsFavorite );
     connect( clearSearchHistoryAction, &QAction::triggered, this,
              &CrawlerWidget::clearSearchHistory );
     connect( editSearchHistoryAction, &QAction::triggered, this,
              &CrawlerWidget::editSearchHistory );
     connect( searchButton_, &QToolButton::clicked, this, &CrawlerWidget::startNewSearch );
+    connect( favoriteFilterButton_, &QToolButton::clicked, this, &CrawlerWidget::saveAsFavorite );
     connect( stopButton_, &QToolButton::clicked, this, &CrawlerWidget::stopSearch );
     connect( clearButton_, &QToolButton::clicked, searchLineEdit_, &QComboBox::clearEditText );
 
@@ -1334,10 +1375,6 @@ void CrawlerWidget::setup()
 
     connectAllFilteredViewSlots( filteredView_ );
 
-    const auto defaultEncodingMib = config.defaultEncodingMib();
-    if ( defaultEncodingMib >= 0 ) {
-        encodingMib_ = defaultEncodingMib;
-    }
     updatePredefinedFiltersWidget();
 }
 
@@ -1595,6 +1632,7 @@ void CrawlerWidget::loadIcons()
     keepSearchResultsButton_->setIcon( iconLoader_.load( "icons8-lock" ) );
     matchCaseButton_->setIcon( iconLoader_.load( "icons8-font-size" ) );
     stopButton_->setIcon( iconLoader_.load( "icons8-close-window" ) );
+    favoriteFilterButton_->setIcon( iconLoader_.load( "icons8-star" ) );
 
 #ifdef Q_OS_MACOS
     // Improve toggle button visibility on macOS by adding distinct styling
@@ -1773,7 +1811,17 @@ void CrawlerWidget::updateEncoding()
         else {
             codec = QTextCodec::codecForMib( *encodingMib_ );
         }
-        return codec ? codec : QTextCodec::codecForLocale();
+
+        if ( codec ) {
+            return codec;
+        }
+
+        const auto defaultEncodingMib = Configuration::get().defaultEncodingMib();
+        if ( defaultEncodingMib >= 0 ) {
+            codec = QTextCodec::codecForMib( defaultEncodingMib );
+        }
+
+        return codec ? codec : QTextCodec::codecForName( "UTF-8" );
     }();
 
     QString encodingPrefix = encodingMib_ ? tr( "Displayed as %1" ) : tr( "Detected as %1" );
