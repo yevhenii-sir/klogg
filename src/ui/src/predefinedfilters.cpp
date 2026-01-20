@@ -38,7 +38,27 @@
 
 #include "predefinedfilters.h"
 
+#include <algorithm>
+
+#include <QCollator>
+#include <QSettings>
+
 #include "log.h"
+
+namespace {
+void sortFilters( PredefinedFiltersCollection::Collection& filters )
+{
+    QCollator collator;
+    collator.setCaseSensitivity( Qt::CaseInsensitive );
+    collator.setNumericMode( true );
+
+    std::stable_sort( filters.begin(), filters.end(),
+                      [ &collator ]( const PredefinedFilter& left,
+                                     const PredefinedFilter& right ) {
+                          return collator.compare( left.name, right.name ) < 0;
+                      } );
+}
+} // namespace
 
 void PredefinedFiltersCollection::retrieveFromStorage( QSettings& settings )
 {
@@ -60,6 +80,7 @@ void PredefinedFiltersCollection::retrieveFromStorage( QSettings& settings )
                                       settings.value( "regex", true ).toBool() } );
             }
             settings.endArray();
+            sortFilters( filters_ );
         }
         else {
             LOG_ERROR << "Unknown version of PredefinedFiltersCollection, ignoring it...";
@@ -72,6 +93,8 @@ void PredefinedFiltersCollection::saveToStorage( QSettings& settings ) const
 {
     LOG_DEBUG << "PredefinedFiltersCollection::saveToStorage";
 
+    auto sortedFilters = filters_;
+    sortFilters( sortedFilters );
     settings.beginGroup( "PredefinedFiltersCollection" );
     settings.setValue( "version", PredefinedFiltersCollection_VERSION );
 
@@ -79,7 +102,7 @@ void PredefinedFiltersCollection::saveToStorage( QSettings& settings ) const
 
     settings.beginWriteArray( "filters" );
     int arrayIndex = 0;
-    for ( const auto& filter : filters_ ) {
+    for ( const auto& filter : sortedFilters ) {
         settings.setArrayIndex( arrayIndex );
         settings.setValue( "name", filter.name );
         settings.setValue( "filter", filter.pattern );
@@ -95,6 +118,7 @@ void PredefinedFiltersCollection::saveToStorage(
     const PredefinedFiltersCollection::Collection& filters )
 {
     filters_ = filters;
+    sortFilters( filters_ );
     this->save();
 }
 
@@ -112,4 +136,24 @@ PredefinedFiltersCollection::Collection PredefinedFiltersCollection::getSyncedFi
 void PredefinedFiltersCollection::setFilters( const Collection& filters )
 {
     filters_ = filters;
+    sortFilters( filters_ );
+}
+
+PredefinedFiltersCollection::Collection PredefinedFiltersCollection::loadFromFile(
+    const QString& file )
+{
+    QSettings settings{ file, QSettings::IniFormat };
+    PredefinedFiltersCollection collection;
+    collection.retrieveFromStorage( settings );
+    return collection.getFilters();
+}
+
+bool PredefinedFiltersCollection::saveToFile(
+    const QString& file, const PredefinedFiltersCollection::Collection& filters )
+{
+    QSettings settings{ file, QSettings::IniFormat };
+    PredefinedFiltersCollection collection;
+    collection.setFilters( filters );
+    collection.saveToStorage( settings );
+    return true;
 }

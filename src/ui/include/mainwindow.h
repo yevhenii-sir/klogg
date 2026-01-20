@@ -123,6 +123,8 @@ class MainWindow : public QMainWindow {
     void openUrl();
     void editHighlighters();
     void editPredefinedFilters( const QString& newFilter = {} );
+    void importFilterFavorites();
+    void exportFilterFavorites();
     void options();
     void about();
     void aboutQt();
@@ -270,6 +272,8 @@ class MainWindow : public QMainWindow {
     QAction* aboutAction;
     QAction* aboutQtAction;
     QAction* predefinedFiltersDialogAction;
+    QAction* importFilterFavoritesAction;
+    QAction* exportFilterFavoritesAction;
     QAction* reportIssueAction;
     QAction* joinDiscordAction;
     QAction* joinTelegramAction;

@@ -96,6 +96,12 @@ const char* action::selectOpenFileText = QT_TR_NOOP( "Switch to opened file..." 
 const char* action::predefinedFiltersDialogText = QT_TR_NOOP( "Filter favorites..." );
 const char* action::predefinedFiltersDialogStatusTip
     = QT_TR_NOOP( "Show dialog to manage filter favorites" );
+const char* action::importFilterFavoritesText = QT_TR_NOOP( "Import filter favorites..." );
+const char* action::importFilterFavoritesStatusTip
+    = QT_TR_NOOP( "Import filter favorites from a file" );
+const char* action::exportFilterFavoritesText = QT_TR_NOOP( "Export filter favorites..." );
+const char* action::exportFilterFavoritesStatusTip
+    = QT_TR_NOOP( "Export filter favorites to a file" );
 const char* action::autoEncodingText = QT_TR_NOOP( "Auto" );
 const char* action::autoEncodingStatusTip
     = QT_TR_NOOP( "Automatically detect the file's encoding" );

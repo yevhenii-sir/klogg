@@ -295,11 +295,7 @@ void PredefinedFiltersDialog::importFilters()
     }
 
     LOG_DEBUG << "Loading predefined filters from " << file;
-    QSettings settings{ file, QSettings::IniFormat };
-
-    PredefinedFiltersCollection collection;
-    collection.retrieveFromStorage( settings );
-    populateFiltersTable( collection.getFilters() );
+    populateFiltersTable( PredefinedFiltersCollection::loadFromFile( file ) );
 }
 
 void PredefinedFiltersDialog::exportFilters()
@@ -315,11 +311,7 @@ void PredefinedFiltersDialog::exportFilters()
         file += ".conf";
     }
 
-    QSettings settings{ file, QSettings::IniFormat };
-
-    PredefinedFiltersCollection collection;
-    collection.setFilters( readFiltersTable() );
-    collection.saveToStorage( settings );
+    PredefinedFiltersCollection::saveToFile( file, readFiltersTable() );
 }
 
 void PredefinedFiltersDialog::resolveStandardButton( QAbstractButton* button )

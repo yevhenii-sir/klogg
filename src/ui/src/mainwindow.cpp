@@ -97,6 +97,7 @@
 #include "mainwindowtext.h"
 #include "openfilehelper.h"
 #include "optionsdialog.h"
+#include "predefinedfilters.h"
 #include "predefinedfiltersdialog.h"
 #include "progress.h"
 #include "readablesize.h"
@@ -410,6 +411,12 @@ void MainWindow::reTranslateUI()
     predefinedFiltersDialogAction->setText( transAction( action::predefinedFiltersDialogText ) );
     predefinedFiltersDialogAction->setStatusTip(
         transAction( action::predefinedFiltersDialogStatusTip ) );
+    importFilterFavoritesAction->setText( transAction( action::importFilterFavoritesText ) );
+    importFilterFavoritesAction->setStatusTip(
+        transAction( action::importFilterFavoritesStatusTip ) );
+    exportFilterFavoritesAction->setText( transAction( action::exportFilterFavoritesText ) );
+    exportFilterFavoritesAction->setStatusTip(
+        transAction( action::exportFilterFavoritesStatusTip ) );
 
     // trayIcon
     trayIcon_->setToolTip( QApplication::translate( "klogg::mainwindow::trayicon",
@@ -661,6 +668,16 @@ void MainWindow::createActions()
     connect( predefinedFiltersDialogAction, &QAction::triggered, this,
              [ this ]( auto ) { this->editPredefinedFilters(); } );
 
+    importFilterFavoritesAction = new QAction( tr( action::importFilterFavoritesText ), this );
+    importFilterFavoritesAction->setStatusTip( tr( action::importFilterFavoritesStatusTip ) );
+    connect( importFilterFavoritesAction, &QAction::triggered, this,
+             [ this ]( auto ) { this->importFilterFavorites(); } );
+
+    exportFilterFavoritesAction = new QAction( tr( action::exportFilterFavoritesText ), this );
+    exportFilterFavoritesAction->setStatusTip( tr( action::exportFilterFavoritesStatusTip ) );
+    connect( exportFilterFavoritesAction, &QAction::triggered, this,
+             [ this ]( auto ) { this->exportFilterFavorites(); } );
+
     updateShortcuts();
 }
 
@@ -840,6 +857,8 @@ void MainWindow::createMenus()
     } );
 
     toolsMenu->addAction( predefinedFiltersDialogAction );
+    toolsMenu->addAction( importFilterFavoritesAction );
+    toolsMenu->addAction( exportFilterFavoritesAction );
 
     toolsMenu->addSeparator();
     toolsMenu->addAction( showScratchPadAction );
@@ -1221,6 +1240,38 @@ void MainWindow::editPredefinedFilters( const QString& newFilter )
 
     dialog.exec();
     signalMux_.disconnect( &dialog, SIGNAL( optionsChanged() ), SLOT( applyConfiguration() ) );
+}
+
+void MainWindow::importFilterFavorites()
+{
+    const auto file
+        = QFileDialog::getOpenFileName( this, tr( "Select file to import" ), "",
+                                        tr( "Filter favorites (*.conf);;All files (*)" ) );
+
+    if ( file.isEmpty() ) {
+        return;
+    }
+
+    const auto filters = PredefinedFiltersCollection::loadFromFile( file );
+    PredefinedFiltersCollection::getSynced().saveToStorage( filters );
+    Q_EMIT optionsChanged();
+}
+
+void MainWindow::exportFilterFavorites()
+{
+    auto file = QFileDialog::getSaveFileName( this, tr( "Export filter favorites" ), "",
+                                              tr( "Filter favorites (*.conf)" ) );
+
+    if ( file.isEmpty() ) {
+        return;
+    }
+
+    if ( !file.endsWith( ".conf" ) ) {
+        file += ".conf";
+    }
+
+    PredefinedFiltersCollection::saveToFile( file,
+                                             PredefinedFiltersCollection::getSynced().getFilters() );
 }
 
 // Opens the 'Options' modal dialog box

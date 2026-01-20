@@ -64,6 +64,8 @@ class PredefinedFiltersCollection final : public Persistable<PredefinedFiltersCo
     Collection getSyncedFilters();
     Collection getFilters() const;
     void setFilters( const Collection& filters );
+    static Collection loadFromFile( const QString& file );
+    static bool saveToFile( const QString& file, const Collection& filters );
 
     void retrieveFromStorage( QSettings& settings );
     void saveToStorage( QSettings& settings ) const;

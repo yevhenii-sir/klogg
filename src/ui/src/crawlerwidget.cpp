@@ -57,6 +57,7 @@
 #include <QKeySequence>
 #include <QLineEdit>
 #include <QListView>
+#include <QMessageBox>
 #include <QShortcut>
 #include <QStandardItemModel>
 #include <QStringListModel>
@@ -491,6 +492,33 @@ void CrawlerWidget::saveAsFavorite()
         } );
 
     if ( existing != filters.end() ) {
+        const auto isSamePattern = ( existing->pattern == currentText );
+        const auto isSameRegex = ( existing->useRegex == useRegex );
+        if ( isSamePattern && isSameRegex ) {
+            QMessageBox::information(
+                this, tr( "klogg" ),
+                tr( "Favorite \"%1\" already exists with the same content." ).arg( trimmedName ) );
+            return;
+        }
+
+        const auto existingRegexText = existing->useRegex ? tr( "On" ) : tr( "Off" );
+        const auto newRegexText = useRegex ? tr( "On" ) : tr( "Off" );
+        const auto details = tr( "Existing:\n  Pattern: %1\n  Regex: %2\n\n"
+                                 "New:\n  Pattern: %3\n  Regex: %4" )
+                                 .arg( existing->pattern, existingRegexText, currentText,
+                                       newRegexText );
+
+        QMessageBox confirmDialog( QMessageBox::Question, tr( "klogg" ),
+                                   tr( "Favorite \"%1\" already exists. Overwrite it?" )
+                                       .arg( trimmedName ),
+                                   QMessageBox::Yes | QMessageBox::No, this );
+        confirmDialog.setDefaultButton( QMessageBox::No );
+        confirmDialog.setDetailedText( details );
+
+        if ( confirmDialog.exec() != QMessageBox::Yes ) {
+            return;
+        }
+
         existing->pattern = currentText;
         existing->useRegex = useRegex;
     }

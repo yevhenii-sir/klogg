@@ -90,6 +90,10 @@ extern const char* removeFromFavoritesText;
 extern const char* selectOpenFileText;
 extern const char* predefinedFiltersDialogText;
 extern const char* predefinedFiltersDialogStatusTip;
+extern const char* importFilterFavoritesText;
+extern const char* importFilterFavoritesStatusTip;
+extern const char* exportFilterFavoritesText;
+extern const char* exportFilterFavoritesStatusTip;
 extern const char* autoEncodingText;
 extern const char* autoEncodingStatusTip;
 } // namespace action
