@@ -41,6 +41,7 @@
 #include <limits>
 #include <QCompleter>
 #include <QComboBox>
+#include <QEvent>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QStringListModel>
@@ -51,6 +52,7 @@
 #include <qregularexpression.h>
 
 #include "configuration.h"
+#include "iconloader.h"
 #include "qfnotifications.h"
 #include "savedsearches.h"
 
@@ -73,7 +75,7 @@ QuickFindWidget::QuickFindWidget( QWidget* parent )
     layout->setContentsMargins( 6, 0, 6, 6 );
 
     closeButton_
-        = setupToolButton( QLatin1String( "" ), QLatin1String( ":/images/darkclosebutton.png" ) );
+        = setupToolButton( QLatin1String( "" ), QLatin1String( "darkclosebutton" ) );
     closeButton_->setShortcut( QKeySequence::Cancel );
     layout->addWidget( closeButton_ );
 
@@ -100,12 +102,12 @@ QuickFindWidget::QuickFindWidget( QWidget* parent )
     layout->addWidget( useRegexpCheck_ );
 
     previousButton_
-        = setupToolButton( QLatin1String( "Previous" ), QLatin1String( ":/images/arrowup.png" ) );
+        = setupToolButton( QLatin1String( "Previous" ), QLatin1String( "arrowup" ) );
     previousButton_->setShortcut( QKeySequence::FindPrevious );
     layout->addWidget( previousButton_ );
 
     nextButton_
-        = setupToolButton( QLatin1String( "Next" ), QLatin1String( ":/images/arrowdown.png" ) );
+        = setupToolButton( QLatin1String( "Next" ), QLatin1String( "arrowdown" ) );
     nextButton_->setShortcut( QKeySequence::FindNext );
     layout->addWidget( nextButton_ );
 
@@ -293,15 +295,35 @@ void QuickFindWidget::recordSearchHistory( const QString& text )
     updateSearchHistory();
 }
 
+void QuickFindWidget::changeEvent( QEvent* event )
+{
+    if ( event->type() == QEvent::StyleChange || event->type() == QEvent::PaletteChange ) {
+        reloadIcons();
+    }
+    QWidget::changeEvent( event );
+}
+
 //
 // Private functions
 //
-QToolButton* QuickFindWidget::setupToolButton( const QString& text, const QString& icon )
+void QuickFindWidget::reloadIcons()
+{
+    if ( !closeButton_ || !previousButton_ || !nextButton_ ) {
+        return;
+    }
+    IconLoader iconLoader{ this };
+    closeButton_->setIcon( iconLoader.load( "darkclosebutton" ) );
+    previousButton_->setIcon( iconLoader.load( "arrowup" ) );
+    nextButton_->setIcon( iconLoader.load( "arrowdown" ) );
+}
+
+QToolButton* QuickFindWidget::setupToolButton( const QString& text, const QString& iconName )
 {
     auto* toolButton = new QToolButton( this );
 
     toolButton->setAutoRaise( true );
-    toolButton->setIcon( QIcon( icon ) );
+    IconLoader iconLoader{ this };
+    toolButton->setIcon( iconLoader.load( iconName ) );
 
     if ( text.size() > 0 ) {
         toolButton->setText( text );

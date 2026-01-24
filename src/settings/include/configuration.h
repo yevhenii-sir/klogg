@@ -629,27 +629,26 @@ class Configuration final : public Persistable<Configuration> {
 
     std::map<std::string, QStringList> shortcuts_;
 
-    // Dark theme palette inspired by popular IDEs and terminal themes
-    // Colors optimized for developer aesthetics with good contrast
-    // FilteredView uses Base color, so ensure it matches Window for consistency
+    // Dark theme palette aligned with the Modern theme tokens.
+    // FilteredView uses Base color, keep it close to Window for consistency.
     std::map<QString, QString> darkPalette_ = {
-        {"Window", "#1e1e1e"},           // VS Code dark background - main view
-        {"WindowText", "#d4d4d4"},        // Light gray text
-        {"Base", "#1e1e1e"},              // Same as Window for FilteredView consistency
-        {"AlternateBase", "#252526"},     // Slightly lighter for alternate rows
-        {"ToolTipBase", "#1e1e1e"},       // Tooltip background
-        {"ToolTipText", "#d4d4d4"},       // Tooltip text
-        {"Text", "#d4d4d4"},              // Main text color - high contrast white
-        {"Button", "#2d2d30"},            // Button background
-        {"ButtonText", "#d4d4d4"},        // Button text
-        {"Link", "#4ec9b0"},              // Cyan link color
-        {"Highlight", "#264f78"},         // Selection background
-        {"HighlightedText", "#ffffff"},    // Selection text
-        {"ActiveButton", "#3e3e42"},      // Active button background
-        {"DisabledButtonText", "#6a6a6a"}, // Disabled button text
-        {"DisabledWindowText", "#6a6a6a"}, // Disabled window text
-        {"DisabledText", "#6a6a6a"},       // Disabled text
-        {"DisabledLight", "#2d2d30"},      // Disabled light
+        {"Window", "#0F1115"},            // Main window background
+        {"WindowText", "#E6E9EF"},        // Primary text
+        {"Base", "#151821"},              // Text input / view background
+        {"AlternateBase", "#1B1F2A"},     // Alternate rows
+        {"ToolTipBase", "#1A1F2B"},       // Tooltip background
+        {"ToolTipText", "#E6E9EF"},       // Tooltip text
+        {"Text", "#E6E9EF"},              // Main text color
+        {"Button", "#1A1F2B"},            // Button background
+        {"ButtonText", "#E6E9EF"},        // Button text
+        {"Link", "#5B8CFF"},              // Link color
+        {"Highlight", "#23314D"},         // Selection background
+        {"HighlightedText", "#EAF2FF"},   // Selection text
+        {"ActiveButton", "#222939"},      // Active button background
+        {"DisabledButtonText", "#7C8596"}, // Disabled button text
+        {"DisabledWindowText", "#7C8596"}, // Disabled window text
+        {"DisabledText", "#7C8596"},       // Disabled text
+        {"DisabledLight", "#1A1F2B"},      // Disabled light
     };
 };
 

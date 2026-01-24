@@ -283,7 +283,18 @@ void Configuration::retrieveFromStorage( QSettings& settings )
 
     style_ = settings.value( "view.style", DefaultConfiguration.style_ ).toString();
 
+    if ( style_ == StyleManager::FusionKey || style_ == StyleManager::VistaKey
+         || style_ == StyleManager::WindowsKey || style_ == StyleManager::MacintoshKey ) {
+        style_ = StyleManager::SystemKey;
+    }
+    else if ( style_ == StyleManager::DarkWindowsStyleKey ) {
+        style_ = StyleManager::DarkStyleKey;
+    }
+
     auto styles = StyleManager::availableStyles();
+    if ( !styles.contains( style_ ) ) {
+        style_ = StyleManager::defaultStyle();
+    }
     if ( !styles.contains( style_ ) ) {
         style_ = StyleManager::defaultPlatformStyle();
     }

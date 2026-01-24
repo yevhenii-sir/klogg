@@ -32,7 +32,7 @@
        </property>
        <property name="icon">
         <iconset resource="../../app/klogg.qrc">
-         <normaloff>:/images/icons8-plus-16.png</normaloff>:/images/icons8-plus-16.png</iconset>
+         <normaloff>:/images/icons8-plus.svg</normaloff>:/images/icons8-plus.svg</iconset>
        </property>
       </widget>
      </item>
@@ -46,7 +46,7 @@
        </property>
        <property name="icon">
         <iconset resource="../../app/klogg.qrc">
-         <normaloff>:/images/icons8-minus-16.png</normaloff>:/images/icons8-minus-16.png</iconset>
+         <normaloff>:/images/icons8-minus.svg</normaloff>:/images/icons8-minus.svg</iconset>
        </property>
       </widget>
      </item>
@@ -103,7 +103,7 @@
        </property>
        <property name="icon">
         <iconset resource="../../app/klogg.qrc">
-         <normaloff>:/images/icons8-up-16.png</normaloff>:/images/icons8-up-16.png</iconset>
+         <normaloff>:/images/icons8-up.svg</normaloff>:/images/icons8-up.svg</iconset>
        </property>
       </widget>
      </item>
@@ -114,7 +114,7 @@
        </property>
        <property name="icon">
         <iconset resource="../../app/klogg.qrc">
-         <normaloff>:/images/icons8-down-arrow-16.png</normaloff>:/images/icons8-down-arrow-16.png</iconset>
+         <normaloff>:/images/icons8-down-arrow.svg</normaloff>:/images/icons8-down-arrow.svg</iconset>
        </property>
       </widget>
      </item>

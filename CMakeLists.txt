@@ -230,6 +230,7 @@ find_package(
              Concurrent
              Network
              Xml
+             Svg
   REQUIRED
 )
 find_package(
@@ -239,6 +240,7 @@ find_package(
              Concurrent
              Network
              Xml
+             Svg
   REQUIRED
 )
 

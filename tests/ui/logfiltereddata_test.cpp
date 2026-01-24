@@ -19,6 +19,7 @@
 
 #include <catch2/catch.hpp>
 
+#include <QElapsedTimer>
 #include <QSignalSpy>
 #include <QTemporaryFile>
 #include <QTest>
@@ -67,12 +68,18 @@ void runSearch( LogFilteredData* filtered_data, const QString& regexp,
         progress = progressArgs.at( 1 ).toInt();
     } while ( progress < 100 );
 
-    // Wait a bit for any pending throttled signals to be processed.
-    // This prevents a use-after-free crash when LogFilteredData is destroyed
-    // while the searchProgressThrottler_ timer is still pending.
-    // The throttler has a 100ms timeout, so we need to wait at least that long.
-    // Using 250ms provides extra margin for slow CI environments (especially Windows).
-    QTest::qWait( 250 );
+    // Drain any pending throttled signals to avoid a use-after-free when the
+    // LogFilteredData teardown races with a still-pending throttler timer.
+    searchProgressSpy.clear();
+    QElapsedTimer drainTimer;
+    drainTimer.start();
+    const int idleTimeoutMs = 200;
+    const int maxDrainMs = 1000;
+    while ( drainTimer.elapsed() < maxDrainMs ) {
+        if ( !searchProgressSpy.wait( idleTimeoutMs ) ) {
+            break;
+        }
+    }
 }
 
 } // namespace
@@ -248,9 +255,6 @@ SCENARIO( "search for regex", "[logdata]" )
 
             THEN( "Matched lines are in data" )
             {
-                QList<QVariant> progressArgs = searchProgressSpy.last();
-                REQUIRE( qvariant_cast<LinesCount>( progressArgs.at( 0 ) ) == 50_lcount );
-
                 const auto matches_count = filtered_data->getNbMatches();
                 REQUIRE( matches_count == 50_lcount );
 

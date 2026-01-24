@@ -47,7 +47,14 @@
 
 #include <QSettings>
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#endif
 #include <simdutf.h>
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #include "containers.h"
 #include "crc32.h"

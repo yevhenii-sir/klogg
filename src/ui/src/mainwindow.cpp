@@ -747,44 +747,11 @@ void MainWindow::loadIcons()
     stopAction->setIcon( iconLoader_.load( "icons8-delete" ) );
     reloadAction->setIcon( iconLoader_.load( "icons8-restore-page" ) );
     followAction->setIcon( iconLoader_.load( "icons8-fast-forward" ) );
+    textWrapAction->setIcon( iconLoader_.load( "text-wrap" ) );
     showScratchPadAction->setIcon( iconLoader_.load( "icons8-create" ) );
     addToFavoritesAction->setIcon( iconLoader_.load( "icons8-star" ) );
     addToFavoritesMenuAction->setIcon( iconLoader_.load( "icons8-star" ) );
 
-#ifdef Q_OS_MACOS
-    // Improve toggle action visibility on macOS by adding distinct styling
-    // for checked/unchecked states with background color and border
-    const QString toggleActionStyle = R"(
-        QToolButton:checked {
-            background-color: rgba(0, 122, 255, 0.2);
-            border: 1px solid rgba(0, 122, 255, 0.5);
-            border-radius: 3px;
-        }
-        QToolButton:!checked {
-            background-color: transparent;
-            border: 1px solid transparent;
-        }
-        QToolButton:checked:hover {
-            background-color: rgba(0, 122, 255, 0.3);
-        }
-    )";
-    
-    // Apply styling to toolbar after it's created
-    // This will be called after createToolBars() sets up the toolbar
-    QTimer::singleShot(0, this, [this, toggleActionStyle]() {
-        if (toolBar) {
-            // Find the QToolButton widgets for checkable actions and apply styling
-            for (QAction* action : { followAction, addToFavoritesAction, showScratchPadAction }) {
-                if (action && action->isCheckable()) {
-                    QWidget* widget = toolBar->widgetForAction(action);
-                    if (widget) {
-                        widget->setStyleSheet(toggleActionStyle);
-                    }
-                }
-            }
-        }
-    });
-#endif
 }
 
 void MainWindow::createMenus()
@@ -911,6 +878,7 @@ void MainWindow::createToolBars()
     toolBar->addAction( openAction );
     toolBar->addAction( reloadAction );
     toolBar->addAction( followAction );
+    toolBar->addAction( textWrapAction );
     toolBar->addAction( addToFavoritesAction );
     toolBar->addWidget( infoLine );
     toolBar->addAction( stopAction );

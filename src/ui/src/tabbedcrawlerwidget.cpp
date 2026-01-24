@@ -22,6 +22,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
+#include <QPalette>
 #include <QFileInfo>
 #include <QInputDialog>
 #include <QKeyEvent>
@@ -43,13 +44,56 @@
 namespace {
 constexpr QLatin1String PathKey = QLatin1String( "path", 4 );
 constexpr QLatin1String StatusKey = QLatin1String( "status", 6 );
+
+bool shouldUseDarkTabIcons( const QWidget* widget, const Configuration& config )
+{
+    if ( config.style() == StyleManager::DarkStyleKey
+         || config.style() == StyleManager::DarkWindowsStyleKey ) {
+        return true;
+    }
+    if ( !widget ) {
+        return false;
+    }
+    const QColor windowColor = widget->palette().color( QPalette::Window );
+    return ( windowColor.red() + windowColor.green() + windowColor.blue() ) <= 384;
+}
 } // namespace
 
 TabbedCrawlerWidget::TabbedCrawlerWidget()
     : QTabWidget()
-    , newdata_icon_( ":/images/newdata_icon.png" )
-    , newfiltered_icon_( ":/images/newfiltered_icon.png" )
+    , newdata_icon_()
+    , newfiltered_icon_()
 {
+    updateTabBarStyle();
+
+    setTabBar( &myTabBar_ );
+    myTabBar_.hide();
+
+    myTabBar_.setContextMenuPolicy( Qt::CustomContextMenu );
+    connect( &myTabBar_, &CrawlerTabBar::showTabContextMenu, this,
+             &TabbedCrawlerWidget::showContextMenu );
+
+    dispatchToMainThread( [ this ] { loadIcons(); } );
+}
+
+void TabbedCrawlerWidget::loadIcons()
+{
+    IconLoader iconLoader{ this };
+    olddata_icon_ = iconLoader.load( "olddata_icon" );
+    newdata_icon_ = iconLoader.load( "newdata_icon" );
+    newfiltered_icon_ = iconLoader.load( "newfiltered_icon" );
+    for ( int tab = 0; tab < count(); ++tab ) {
+        updateIcon( tab );
+    }
+}
+
+void TabbedCrawlerWidget::updateTabBarStyle()
+{
+    const auto& config = Configuration::get();
+    if ( config.style() == StyleManager::ModernKey ) {
+        myTabBar_.setStyleSheet( "" );
+        return;
+    }
 
     QString tabStyle = "QTabBar::tab { height: 24px; }";
     QString tabCloseButtonStyle = " QTabBar::close-button {\
@@ -61,26 +105,26 @@ TabbedCrawlerWidget::TabbedCrawlerWidget()
     QString backgroundImage;
     QString backgroundHoverImage;
 
-    const auto& config = Configuration::get();
-    if ( config.style() == StyleManager::DarkStyleKey ) {
-        backgroundImage = ":/images/icons8-close-window-16_inverse.png";
-        backgroundHoverImage = ":/images/icons8-close-window-hover-16_inverse.png";
+    const bool useDarkIcons = shouldUseDarkTabIcons( this, config );
+    if ( useDarkIcons ) {
+        backgroundImage = ":/images/icons8-close-window_inverse.svg";
+        backgroundHoverImage = ":/images/icons8-close-window-hover_inverse.svg";
     }
 
 #if defined( Q_OS_MAC )
     // work around Qt MacOSX bug missing tab close icons
     // see: https://bugreports.qt.io/browse/QTBUG-61092
     // still broken in document mode in Qt.5.12.2 !!!!
-    if ( config.style() != StyleManager::DarkStyleKey ) {
+    if ( !useDarkIcons ) {
         backgroundImage
             = ":/qt-project.org/styles/commonstyle/images/standardbutton-closetab-16.png";
         backgroundHoverImage
             = ":/qt-project.org/styles/commonstyle/images/standardbutton-closetab-hover-16.png";
     }
 #elif defined( Q_OS_WIN )
-    if ( config.style() == StyleManager::FusionKey ) {
-        backgroundImage = ":/images/icons8-close-window-16.png";
-        backgroundHoverImage = ":/images/icons8-close-window-hover-16.png";
+    if ( !useDarkIcons && config.style() == StyleManager::FusionKey ) {
+        backgroundImage = ":/images/icons8-close-window.svg";
+        backgroundHoverImage = ":/images/icons8-close-window-hover.svg";
     }
 #endif
 
@@ -98,29 +142,12 @@ TabbedCrawlerWidget::TabbedCrawlerWidget()
     }
 
     myTabBar_.setStyleSheet( tabStyle.append( tabCloseButtonStyle ) );
-
-    setTabBar( &myTabBar_ );
-    myTabBar_.hide();
-
-    myTabBar_.setContextMenuPolicy( Qt::CustomContextMenu );
-    connect( &myTabBar_, &CrawlerTabBar::showTabContextMenu, this,
-             &TabbedCrawlerWidget::showContextMenu );
-
-    dispatchToMainThread( [ this ] { loadIcons(); } );
-}
-
-void TabbedCrawlerWidget::loadIcons()
-{
-    IconLoader iconLoader{ this };
-    olddata_icon_ = iconLoader.load( "olddata_icon" );
-    for ( int tab = 0; tab < count(); ++tab ) {
-        updateIcon( tab );
-    }
 }
 
 void TabbedCrawlerWidget::changeEvent( QEvent* event )
 {
-    if ( event->type() == QEvent::StyleChange ) {
+    if ( event->type() == QEvent::StyleChange || event->type() == QEvent::PaletteChange ) {
+        updateTabBarStyle();
         dispatchToMainThread( [ this ] { loadIcons(); } );
     }
 

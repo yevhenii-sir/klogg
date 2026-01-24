@@ -49,6 +49,7 @@ class QToolButton;
 class QLabel;
 class QCheckBox;
 class QFNotification;
+class QEvent;
 
 enum QFDirection {
     Forward,
@@ -65,6 +66,9 @@ class QuickFindWidget : public QWidget
     // Show the widget with the given direction
     // when requested by the user (the widget won't timeout)
     void userActivate();
+
+  protected:
+    void changeEvent( QEvent* event ) override;
 
   public Q_SLOTS:
     // Instructs the widget to change the pattern displayed
@@ -100,6 +104,7 @@ class QuickFindWidget : public QWidget
   private:
     void updateSearchHistory();
     void recordSearchHistory( const QString& text );
+    void reloadIcons();
 
     QHBoxLayout* layout_;
 
@@ -113,7 +118,7 @@ class QuickFindWidget : public QWidget
     QCheckBox*   useRegexpCheck_;
     QLabel*      notificationText_;
 
-    QToolButton* setupToolButton(const QString &text, const QString &icon);
+    QToolButton* setupToolButton(const QString &text, const QString &iconName);
     bool isIgnoreCase() const;
     bool isRegexSearch() const;
     bool isWholeWord() const;

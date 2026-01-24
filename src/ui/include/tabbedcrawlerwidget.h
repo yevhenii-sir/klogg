@@ -83,6 +83,7 @@ class TabbedCrawlerWidget : public QTabWidget {
     // Set the data status (icon) for the tab number 'index'
     void setTabDataStatus( int index, DataStatus status );
 
+    void updateTabBarStyle();
     void loadIcons();
     void updateIcon( int index );
 

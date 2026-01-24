@@ -24,7 +24,7 @@ jobs:
             arch: x64
             qt_version: 6.9.3
             qt_arch: linux_gcc_64
-            qt_modules: qt5compat
+            qt_modules: qt5compat qtsvg
             languages: ['cpp']
 
     steps:
@@ -51,6 +51,10 @@ jobs:
         # queries: ./path/to/local/query, your-org/your-repo/queries@main
 
     - uses: ./.github/actions/agent-setup
+    - name: Install Linux deps
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev
 
     - name: Prepare compiler env
       run: |

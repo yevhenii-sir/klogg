@@ -52,6 +52,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QCompleter>
+#include <QFontMetrics>
 #include <QInputDialog>
 #include <QJsonDocument>
 #include <QKeySequence>
@@ -1205,7 +1206,9 @@ void CrawlerWidget::setup()
     contextLinesSpinBox_->setValue( 0 );
     contextLinesSpinBox_->setToolTip( tr( "Number of context lines" ) );
     contextLinesSpinBox_->setSizePolicy( QSizePolicy::Minimum, QSizePolicy::Minimum );
-    contextLinesSpinBox_->setMaximumWidth( 60 );
+    const int contextDigitsWidth
+        = QFontMetrics( contextLinesSpinBox_->font() ).horizontalAdvance( QStringLiteral( "0000" ) );
+    contextLinesSpinBox_->setMinimumWidth( contextDigitsWidth + 32 );
 
     // Create combobox for context lines mode
     contextLinesComboBox_ = new QComboBox();
@@ -1662,31 +1665,6 @@ void CrawlerWidget::loadIcons()
     stopButton_->setIcon( iconLoader_.load( "icons8-close-window" ) );
     favoriteFilterButton_->setIcon( iconLoader_.load( "icons8-star" ) );
 
-#ifdef Q_OS_MACOS
-    // Improve toggle button visibility on macOS by adding distinct styling
-    // for checked/unchecked states with background color and border
-    const QString toggleButtonStyle = R"(
-        QToolButton:checked {
-            background-color: rgba(0, 122, 255, 0.2);
-            border: 1px solid rgba(0, 122, 255, 0.5);
-            border-radius: 3px;
-        }
-        QToolButton:!checked {
-            background-color: transparent;
-            border: 1px solid transparent;
-        }
-        QToolButton:checked:hover {
-            background-color: rgba(0, 122, 255, 0.3);
-        }
-    )";
-    
-    searchRefreshButton_->setStyleSheet( toggleButtonStyle );
-    useRegexpButton_->setStyleSheet( toggleButtonStyle );
-    inverseButton_->setStyleSheet( toggleButtonStyle );
-    booleanButton_->setStyleSheet( toggleButtonStyle );
-    matchCaseButton_->setStyleSheet( toggleButtonStyle );
-    keepSearchResultsButton_->setStyleSheet( toggleButtonStyle );
-#endif
 }
 
 // Create a new search using the text passed, replace the currently

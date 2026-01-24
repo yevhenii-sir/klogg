@@ -108,10 +108,10 @@ PredefinedFiltersDialog::PredefinedFiltersDialog( QWidget* parent )
     dispatchToMainThread( [ this ] {
         IconLoader iconLoader( this );
 
-        addFilterButton->setIcon( iconLoader.load( "icons8-plus-16" ) );
-        removeFilterButton->setIcon( iconLoader.load( "icons8-minus-16" ) );
-        upButton->setIcon( iconLoader.load( "icons8-up-16" ) );
-        downButton->setIcon( iconLoader.load( "icons8-down-arrow-16" ) );
+        addFilterButton->setIcon( iconLoader.load( "icons8-plus" ) );
+        removeFilterButton->setIcon( iconLoader.load( "icons8-minus" ) );
+        upButton->setIcon( iconLoader.load( "icons8-up" ) );
+        downButton->setIcon( iconLoader.load( "icons8-down-arrow" ) );
     } );
 }
 

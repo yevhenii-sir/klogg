@@ -14,7 +14,9 @@
 #ifndef KLOGG_ICONLOADER_H
 #define KLOGG_ICONLOADER_H
 
+#include <QColor>
 #include <QIcon>
+#include <QImage>
 
 class QWidget;
 
@@ -26,12 +28,19 @@ class IconLoader {
   private:
     bool shouldInvert() const;
     bool shouldAutoInvert( QString ) const;
+    bool shouldTint() const;
+    QColor iconTintColor() const;
+    bool isMostlyMonochrome( const QImage& ) const;
+    QPixmap renderSvg( const QString& filename, int size, const QColor& tintColor,
+                       bool tint ) const;
 
     QPixmap loadPixmap( QString, int ) const;
 
     QPixmap invertPixmap( QPixmap ) const;
+    QPixmap tintPixmap( QPixmap, const QColor& ) const;
 
-    QString makeNonScalableFilename( QString, int, bool ) const;
+    QString makeScalableFilename( QString, bool ) const;
+    QString makeNonScalableFilename( QString, int, bool, bool ) const;
 
   private:
     QWidget* widget_;

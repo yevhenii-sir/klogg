@@ -21,6 +21,8 @@
 #define KLOGG_CLI_H
 
 #include <cstdint>
+#include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <vector>
 
@@ -28,11 +30,21 @@
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QString>
+#include <QStringList>
 
 #include "klogg_version.h"
 #include "log.h"
 
 struct CliParameters {
+    using ExitHandler = std::function<void( int )>;
+
+  private:
+    static ExitHandler defaultExitHandler()
+    {
+        return []( int code ) { std::exit( code ); };
+    }
+
+  public:
     bool new_session = false;
     bool load_session = false;
     bool multi_instance = false;
@@ -49,12 +61,29 @@ struct CliParameters {
 
     QString pattern;
 
-    CliParameters( QCoreApplication& app, bool console = false )
+    CliParameters( QCoreApplication& app, bool console = false,
+                   ExitHandler exit_handler = defaultExitHandler() )
+    {
+        parseArgs( app.arguments(), console, std::move( exit_handler ) );
+    }
+
+    CliParameters( const QStringList& args, bool console = false,
+                   ExitHandler exit_handler = defaultExitHandler() )
+    {
+        parseArgs( args, console, std::move( exit_handler ) );
+    }
+
+  private:
+    void parseArgs( const QStringList& args, bool console, const ExitHandler& exit_handler )
     {
         QCommandLineParser parser;
         parser.setApplicationDescription( "Klogg log viewer" );
         const auto helpOption = parser.addHelpOption();
-        const auto versionOption = parser.addVersionOption();
+        const QCommandLineOption versionOption(
+            QStringList() << "v"
+                          << "version",
+            "Displays version information" );
+        parser.addOption( versionOption );
 
         const QCommandLineOption multiInstanceOption(
             QStringList() << "m"
@@ -88,13 +117,14 @@ struct CliParameters {
                           << "debug",
             "output more debug (increase number for more verbosity)", "debug_level", "0" );
 
+        const QCommandLineOption windowWidthOption( "window-width", "new window width",
+                                                    "width", "1024" );
+        const QCommandLineOption windowHeightOption( "window-height", "new window height",
+                                                     "height", "768" );
+
         parser.addOption( debugOption );
 
         if ( !console ) {
-            const QCommandLineOption windowWidthOption( "window-width", "new window width",
-                                                        "1024" );
-            const QCommandLineOption windowHeightOption( "window-height", "new window height",
-                                                         "768" );
             parser.addOption( multiInstanceOption );
             parser.addOption( loadSessionOption );
             parser.addOption( newSessionOption );
@@ -107,15 +137,28 @@ struct CliParameters {
             parser.addOption( patternOption );
         }
 
-        parser.process( app );
+        if ( !parser.parse( args ) ) {
+            std::cerr << parser.errorText().toStdString() << "\n";
+            if ( exit_handler ) {
+                exit_handler( EXIT_FAILURE );
+            }
+            return;
+        }
 
         if ( parser.isSet( helpOption ) ) {
-            parser.showHelp( EXIT_SUCCESS );
+            std::cout << parser.helpText().toStdString();
+            if ( exit_handler ) {
+                exit_handler( EXIT_SUCCESS );
+            }
+            return;
         }
 
         if ( parser.isSet( versionOption ) ) {
             print_version();
-            exit( EXIT_SUCCESS );
+            if ( exit_handler ) {
+                exit_handler( EXIT_SUCCESS );
+            }
+            return;
         }
 
         if (parser.value( debugOption ).toInt() > 0) {
@@ -144,6 +187,9 @@ struct CliParameters {
             if ( parser.isSet( followOption ) ) {
                 follow_file = true;
             }
+
+            window_width = parser.value( windowWidthOption ).toInt();
+            window_height = parser.value( windowHeightOption ).toInt();
         }
         else {
 

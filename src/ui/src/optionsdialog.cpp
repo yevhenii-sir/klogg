@@ -64,6 +64,8 @@ OptionsDialog::OptionsDialog( QWidget* parent )
     : QDialog( parent )
 {
     setupUi( this );
+    setSizeGripEnabled( true );
+    setMinimumSize( QSize( 640, 520 ) );
 
     setupTabs();
     setupFontList();
@@ -153,8 +155,11 @@ void OptionsDialog::setupRegexp()
 
 void OptionsDialog::setupStyles()
 {
-    styleComboBox->addItems( StyleManager::availableStyles() );
-    
+    styleComboBox->clear();
+    styleComboBox->addItem( tr( "Modern" ), StyleManager::ModernKey );
+    styleComboBox->addItem( tr( "System" ), StyleManager::SystemKey );
+    styleComboBox->addItem( tr( "Classic Dark" ), StyleManager::DarkStyleKey );
+
     // Setup theme mode combo box
     themeModeComboBox->addItem( tr( "Light" ), static_cast<int>( ThemeMode::Light ) );
     themeModeComboBox->addItem( tr( "Dark" ), static_cast<int>( ThemeMode::Dark ) );
@@ -349,12 +354,8 @@ void OptionsDialog::updateDialogFromConfig()
     languageComboBox->setCurrentIndex( langIdx );
 
     const auto style = config.style();
-    if ( !styleComboBox->findText( style, Qt::MatchExactly ) ) {
-        styleComboBox->setCurrentIndex( 0 );
-    }
-    else {
-        styleComboBox->setCurrentText( style );
-    }
+    const int styleIndex = styleComboBox->findData( style );
+    styleComboBox->setCurrentIndex( styleIndex == -1 ? 0 : styleIndex );
 
     // Theme mode
     const auto themeMode = config.themeMode();
@@ -605,9 +606,10 @@ void OptionsDialog::updateConfigFromDialog()
 
     config.setVerifySslPeers( verifySslCheckBox->isChecked() );
 
-    restartAppMessage = config.style() != styleComboBox->currentText();
+    const auto selectedStyle = styleComboBox->currentData().toString();
+    restartAppMessage = config.style() != selectedStyle;
 
-    config.setStyle( styleComboBox->currentText() );
+    config.setStyle( selectedStyle );
     
     // Theme mode
     const auto themeMode = static_cast<ThemeMode>( themeModeComboBox->currentData().toInt() );

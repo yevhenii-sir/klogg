@@ -117,6 +117,7 @@ target_link_libraries(
          klogg_karchive
          Qt${QT_VERSION_MAJOR}::Widgets
          Qt${QT_VERSION_MAJOR}::Xml
+         Qt${QT_VERSION_MAJOR}::Svg
 )
 
 if(WIN32)

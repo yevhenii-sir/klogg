@@ -8,9 +8,10 @@ RUN apt-get update -y && \
     apt-get update -y && \
     apt-get install --no-install-recommends build-essential python3 python-is-python3 \
                     qt515base qt515svg qt515tools qt515imageformats qt515translations \
+                    libxkbcommon-dev libxkbcommon-x11-dev \
                     mesa-common-dev libglu1-mesa-dev \
                     libboost-dev libicu-dev libssl-dev libcurl4-openssl-dev \
-                    ragel ninja-build zlib1g-dev git pkg-config \ 
+                    ragel ninja-build zlib1g-dev git pkg-config \
                     wget ca-certificates fuse file -y && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
