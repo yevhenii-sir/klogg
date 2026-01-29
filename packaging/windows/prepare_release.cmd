@@ -82,6 +82,7 @@ xcopy %QTDIR%\bin\%KLOGG_QT%Widgets.dll %KLOGG_WORKSPACE%\release\ /y
 xcopy %QTDIR%\bin\%KLOGG_QT%Concurrent.dll %KLOGG_WORKSPACE%\release\ /y
 xcopy %QTDIR%\bin\%KLOGG_QT%Xml.dll %KLOGG_WORKSPACE%\release\ /y
 xcopy %QTDIR%\bin\%KLOGG_QT%Core5Compat.dll %KLOGG_WORKSPACE%\release\ /y
+xcopy %QTDIR%\bin\%KLOGG_QT%Svg.dll %KLOGG_WORKSPACE%\release\ /y
 
 md %KLOGG_WORKSPACE%\release\platforms
 xcopy %QTDIR%\plugins\platforms\qwindows.dll %KLOGG_WORKSPACE%\release\platforms\ /y
@@ -89,6 +90,9 @@ xcopy %QTDIR%\plugins\platforms\qwindows.dll %KLOGG_WORKSPACE%\release\platforms
 md %KLOGG_WORKSPACE%\release\styles
 xcopy %QTDIR%\plugins\styles\qwindowsvistastyle.dll %KLOGG_WORKSPACE%\release\styles /y
 xcopy %QTDIR%\plugins\styles\qmodernwindowsstyle.dll %KLOGG_WORKSPACE%\release\styles /y
+
+md %KLOGG_WORKSPACE%\release\imageformats
+xcopy %QTDIR%\plugins\imageformats\qsvg.dll %KLOGG_WORKSPACE%\release\imageformats\ /y
 
 echo "Copying packaging files..."
 md %KLOGG_WORKSPACE%\chocolately

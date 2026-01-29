@@ -36,4 +36,6 @@ if( patch_reverse_check_result EQUAL 0 )
   return()
 endif()
 
-message( WARNING "Skipping patch (context mismatch): ${PATCH_FILE}" )
+message( FATAL_ERROR
+         "Failed to apply patch (context mismatch): ${PATCH_FILE}. "
+         "Please delete the dependency build directory and reconfigure." )

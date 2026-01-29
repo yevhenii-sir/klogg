@@ -3,7 +3,7 @@ FROM oraclelinux:8
 COPY epel.repo /etc/yum.repos.d
 
 RUN yum update -y && \
-    yum install -y --enablerepo=ol8_codeready_builder ragel make wget python38 rpm-build git \
+    yum install -y --enablerepo=ol8_codeready_builder ragel make wget python38 rpm-build git cppcheck \
     qt5-qtbase-devel qt5-linguist qt5-qttranslations qt5-qtsvg-devel \
     libxkbcommon-devel libxkbcommon-x11-devel \
     openssl-devel boost-devel zlib-devel libcurl-devel \

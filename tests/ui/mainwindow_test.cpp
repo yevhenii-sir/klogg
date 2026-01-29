@@ -19,8 +19,11 @@
 
 #include <catch2/catch.hpp>
 
+#include <QAction>
+#include <QFile>
+#include <QKeySequence>
 #include <QSignalSpy>
-#include <QTemporaryFile>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <QToolBar>
@@ -68,6 +71,15 @@ SCENARIO( "Main window tests", "[ui]" )
         auto tabArea = mainWindow->findChild<TabbedCrawlerWidget*>();
         REQUIRE( tabArea != nullptr );
 
+        QTemporaryDir tempDir;
+        REQUIRE( tempDir.isValid() );
+        const auto testFilePath = tempDir.filePath( "klogg.conf" );
+        {
+            QFile testFile( testFilePath );
+            REQUIRE( testFile.open( QIODevice::WriteOnly | QIODevice::Truncate ) );
+            testFile.write( "test\n" );
+        }
+
         THEN( "Has no tabs" )
         {
             REQUIRE( tabArea->count() == 0 );
@@ -76,6 +88,27 @@ SCENARIO( "Main window tests", "[ui]" )
                 REQUIRE( filePathLabel->text().isEmpty() );
             }
         }
+
+        QAction* closeActionByShortcut = nullptr;
+        const auto closeKeyBindings = QKeySequence::keyBindings( QKeySequence::Close );
+        for ( auto* action : mainWindow->findChildren<QAction*>() ) {
+            const auto shortcuts = action->shortcuts();
+            for ( const auto& shortcut : shortcuts ) {
+                for ( const auto& closeKey : closeKeyBindings ) {
+                    if ( shortcut.matches( closeKey ) == QKeySequence::ExactMatch ) {
+                        closeActionByShortcut = action;
+                        break;
+                    }
+                }
+                if ( closeActionByShortcut ) {
+                    break;
+                }
+            }
+            if ( closeActionByShortcut ) {
+                break;
+            }
+        }
+        REQUIRE( closeActionByShortcut != nullptr );
 
         WHEN( "Exit hotkey pressed" )
         {
@@ -92,9 +125,9 @@ SCENARIO( "Main window tests", "[ui]" )
 
         WHEN( "Load file" )
         {
-            runInUiThread( [&mainWindow] {
+            runInUiThread( [&mainWindow, testFilePath] {
                 LOG_INFO << "Load file";
-                mainWindow->loadInitialFile( "klogg.conf", false );
+                mainWindow->loadInitialFile( testFilePath, false );
             } );
 
             THEN( "Path line has file name" )
@@ -110,9 +143,9 @@ SCENARIO( "Main window tests", "[ui]" )
 
             AND_WHEN( "Close tab hotkey pressed" )
             {
-                runInUiThread( [&mainWindow] {
+                runInUiThread( [closeActionByShortcut] {
                     LOG_INFO << "Close tab";
-                    QTest::keyPress( mainWindow.get(), Qt::Key_W, Qt::ControlModifier );
+                    closeActionByShortcut->trigger();
                 } );
 
                 THEN( "Has no tabs" )

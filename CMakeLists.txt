@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.12)
 
+# Keep old dependency projects compatible with newer CMake policy handling.
+if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "Minimum policy version for dependencies" FORCE)
+endif()
+
 # Allow dependencies with older minimum CMake requirements
 if(POLICY CMP0169)
   cmake_policy(SET CMP0169 OLD)
@@ -253,6 +258,39 @@ if(APPLE)
   if(${KLOGG_OSX_DEPLOYMENT_TARGET})
     set(CMAKE_OSX_DEPLOYMENT_TARGET ${KLOGG_OSX_DEPLOYMENT_TARGET})
     message("OSX target ${CMAKE_OSX_DEPLOYMENT_TARGET}")
+  endif()
+
+  if(NOT DEFINED CMAKE_OSX_SYSROOT OR CMAKE_OSX_SYSROOT STREQUAL "")
+    execute_process(
+      COMMAND xcrun --sdk macosx --show-sdk-path
+      OUTPUT_VARIABLE KLOGG_OSX_SDK_PATH
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE KLOGG_OSX_SDK_PATH_RESULT
+    )
+    if(KLOGG_OSX_SDK_PATH_RESULT EQUAL 0 AND NOT KLOGG_OSX_SDK_PATH STREQUAL "")
+      set(CMAKE_OSX_SYSROOT "${KLOGG_OSX_SDK_PATH}" CACHE PATH "macOS SDK path" FORCE)
+      message("OSX sysroot ${CMAKE_OSX_SYSROOT}")
+    endif()
+  endif()
+
+  execute_process(
+    COMMAND xcrun --sdk macosx --show-sdk-version
+    OUTPUT_VARIABLE KLOGG_OSX_SDK_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE KLOGG_OSX_SDK_VERSION_RESULT
+  )
+  if(KLOGG_OSX_SDK_VERSION_RESULT EQUAL 0 AND NOT KLOGG_OSX_SDK_VERSION STREQUAL "")
+    set(_klogg_sdk_stamp "${CMAKE_BINARY_DIR}/.klogg_sdk_version")
+    if(EXISTS "${_klogg_sdk_stamp}")
+      file(READ "${_klogg_sdk_stamp}" _klogg_sdk_prev)
+      string(STRIP "${_klogg_sdk_prev}" _klogg_sdk_prev)
+      if(NOT _klogg_sdk_prev STREQUAL KLOGG_OSX_SDK_VERSION)
+        message(FATAL_ERROR
+                "macOS SDK version changed from ${_klogg_sdk_prev} to ${KLOGG_OSX_SDK_VERSION}. "
+                "Please delete your build directory to avoid mixed SDK objects.")
+      endif()
+    endif()
+    file(WRITE "${_klogg_sdk_stamp}" "${KLOGG_OSX_SDK_VERSION}\n")
   endif()
 endif()
 

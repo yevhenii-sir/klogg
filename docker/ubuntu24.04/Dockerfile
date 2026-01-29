@@ -8,7 +8,7 @@ RUN apt-get update -y && \
                     qt6-tools-dev-tools qt6-base-dev-tools qt6-tools-dev \
                     libxkbcommon-dev libxkbcommon-x11-dev \
                     libboost-dev libicu-dev libssl-dev libcurl4-openssl-dev \
-                    ragel ninja-build zlib1g-dev git pkg-config \
+                    ragel ninja-build zlib1g-dev git pkg-config cppcheck \
                     wget ca-certificates fuse file -y && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 

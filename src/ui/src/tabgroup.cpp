@@ -1,0 +1,191 @@
+/*
+ * Copyright (C) 2024 Anton Filimonov and other contributors
+ *
+ * This file is part of klogg.
+ *
+ * klogg is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * klogg is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with klogg.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include "tabgroup.h"
+
+#include <QSettings>
+
+#include "log.h"
+
+QList<TabGroup> TabGroupManager::groups() const
+{
+    return groups_;
+}
+
+TabGroup* TabGroupManager::groupById( const QString& groupId )
+{
+    for ( auto& group : groups_ ) {
+        if ( group.id == groupId ) {
+            return &group;
+        }
+    }
+    return nullptr;
+}
+
+const TabGroup* TabGroupManager::groupById( const QString& groupId ) const
+{
+    for ( const auto& group : groups_ ) {
+        if ( group.id == groupId ) {
+            return &group;
+        }
+    }
+    return nullptr;
+}
+
+QString TabGroupManager::groupIdForTab( const QString& tabPath ) const
+{
+    for ( const auto& group : groups_ ) {
+        if ( group.tabPaths.contains( tabPath ) ) {
+            return group.id;
+        }
+    }
+    return {};
+}
+
+TabGroup* TabGroupManager::groupForTab( const QString& tabPath )
+{
+    for ( auto& group : groups_ ) {
+        if ( group.tabPaths.contains( tabPath ) ) {
+            return &group;
+        }
+    }
+    return nullptr;
+}
+
+void TabGroupManager::createGroup( const QString& name, const QColor& color )
+{
+    groups_.append( TabGroup( name, color ) );
+    Q_EMIT groupsChanged();
+}
+
+void TabGroupManager::deleteGroup( const QString& groupId )
+{
+    for ( int i = 0; i < groups_.size(); ++i ) {
+        if ( groups_[ i ].id == groupId ) {
+            groups_.removeAt( i );
+            Q_EMIT groupsChanged();
+            return;
+        }
+    }
+}
+
+void TabGroupManager::renameGroup( const QString& groupId, const QString& newName )
+{
+    if ( auto* group = groupById( groupId ) ) {
+        group->name = newName;
+        Q_EMIT groupsChanged();
+    }
+}
+
+void TabGroupManager::setGroupColor( const QString& groupId, const QColor& color )
+{
+    if ( auto* group = groupById( groupId ) ) {
+        group->color = color;
+        Q_EMIT groupsChanged();
+    }
+}
+
+void TabGroupManager::toggleCollapsed( const QString& groupId )
+{
+    if ( auto* group = groupById( groupId ) ) {
+        group->collapsed = !group->collapsed;
+        Q_EMIT groupCollapsedChanged( groupId, group->collapsed );
+        Q_EMIT groupsChanged();
+    }
+}
+
+void TabGroupManager::addTabToGroup( const QString& groupId, const QString& tabPath )
+{
+    // First remove from any existing group
+    removeTabFromGroup( tabPath );
+
+    if ( auto* group = groupById( groupId ) ) {
+        if ( !group->tabPaths.contains( tabPath ) ) {
+            group->tabPaths.append( tabPath );
+            Q_EMIT groupsChanged();
+        }
+    }
+}
+
+void TabGroupManager::removeTabFromGroup( const QString& tabPath )
+{
+    for ( auto& group : groups_ ) {
+        if ( group.tabPaths.removeAll( tabPath ) > 0 ) {
+            Q_EMIT groupsChanged();
+            return;
+        }
+    }
+}
+
+void TabGroupManager::moveTabToGroup( const QString& tabPath, const QString& newGroupId )
+{
+    removeTabFromGroup( tabPath );
+    if ( !newGroupId.isEmpty() ) {
+        addTabToGroup( newGroupId, tabPath );
+    }
+}
+
+void TabGroupManager::ungroupAll( const QString& groupId )
+{
+    if ( auto* group = groupById( groupId ) ) {
+        group->tabPaths.clear();
+        deleteGroup( groupId );
+    }
+}
+
+void TabGroupManager::retrieveFromStorage( QSettings& settings )
+{
+    LOG_DEBUG << "TabGroupManager::retrieveFromStorage";
+
+    groups_.clear();
+
+    const int groupCount = settings.beginReadArray( "tabGroups" );
+    for ( int i = 0; i < groupCount; ++i ) {
+        settings.setArrayIndex( i );
+
+        TabGroup group;
+        group.id = settings.value( "id" ).toString();
+        group.name = settings.value( "name" ).toString();
+        group.color = QColor( settings.value( "color", "#5B8CFF" ).toString() );
+        group.collapsed = settings.value( "collapsed", false ).toBool();
+        group.tabPaths = settings.value( "tabPaths" ).toStringList();
+
+        if ( !group.id.isEmpty() && !group.name.isEmpty() ) {
+            groups_.append( group );
+        }
+    }
+    settings.endArray();
+}
+
+void TabGroupManager::saveToStorage( QSettings& settings ) const
+{
+    LOG_DEBUG << "TabGroupManager::saveToStorage";
+
+    settings.beginWriteArray( "tabGroups" );
+    for ( int i = 0; i < groups_.size(); ++i ) {
+        settings.setArrayIndex( i );
+        const auto& group = groups_[ i ];
+        settings.setValue( "id", group.id );
+        settings.setValue( "name", group.name );
+        settings.setValue( "color", group.color.name( QColor::HexArgb ) );
+        settings.setValue( "collapsed", group.collapsed );
+        settings.setValue( "tabPaths", group.tabPaths );
+    }
+    settings.endArray();
+}

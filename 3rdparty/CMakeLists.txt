@@ -52,6 +52,24 @@ if(KLOGG_USE_HYPERSCAN)
   target_link_libraries(klogg_hyperscan INTERFACE hs)
   target_include_directories(klogg_hyperscan INTERFACE ${hyperscan_SOURCE_DIR}/src)
 elseif(KLOGG_USE_VECTORSCAN)
+  if(NOT BOOST_ROOT AND DEFINED ENV{BOOST_ROOT})
+    set(BOOST_ROOT "$ENV{BOOST_ROOT}" CACHE PATH "Boost root path" FORCE)
+  endif()
+  if(APPLE AND (NOT BOOST_ROOT OR BOOST_ROOT STREQUAL ""))
+    find_program(KLOGG_BREW_EXECUTABLE brew)
+    if(KLOGG_BREW_EXECUTABLE)
+      execute_process(
+        COMMAND ${KLOGG_BREW_EXECUTABLE} --prefix boost
+        OUTPUT_VARIABLE KLOGG_BREW_BOOST_PREFIX
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+      )
+      if(KLOGG_BREW_BOOST_PREFIX AND EXISTS "${KLOGG_BREW_BOOST_PREFIX}")
+        set(BOOST_ROOT "${KLOGG_BREW_BOOST_PREFIX}" CACHE PATH "Boost root path" FORCE)
+      endif()
+    endif()
+  endif()
+
   cpmaddpackage(
     NAME
     vectorscan
@@ -419,4 +437,3 @@ foreach(target ${klogg_cpm_targets})
     set_property(TARGET ${target} PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES ${${target}_include_dirs})
   endif()
 endforeach()
-

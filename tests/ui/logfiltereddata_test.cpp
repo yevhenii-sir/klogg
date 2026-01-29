@@ -73,8 +73,8 @@ void runSearch( LogFilteredData* filtered_data, const QString& regexp,
     searchProgressSpy.clear();
     QElapsedTimer drainTimer;
     drainTimer.start();
-    const int idleTimeoutMs = 200;
-    const int maxDrainMs = 1000;
+    const int idleTimeoutMs = 500;
+    const int maxDrainMs = 5000;
     while ( drainTimer.elapsed() < maxDrainMs ) {
         if ( !searchProgressSpy.wait( idleTimeoutMs ) ) {
             break;

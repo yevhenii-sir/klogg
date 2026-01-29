@@ -499,6 +499,15 @@ class Configuration final : public Persistable<Configuration> {
         useTextWrap_ = enable;
     }
 
+    bool confirmTabClose() const
+    {
+        return confirmTabClose_;
+    }
+    void setConfirmTabClose( bool confirm )
+    {
+        confirmTabClose_ = confirm;
+    }
+
     bool autoRunSearchOnPatternChange() const
     {
         return autoRunSearchOnPatternChange_;
@@ -626,6 +635,8 @@ class Configuration final : public Persistable<Configuration> {
     bool qfIgnoreCase_ = true;
 
     bool useTextWrap_ = false;
+
+    bool confirmTabClose_ = true;
 
     std::map<std::string, QStringList> shortcuts_;
 

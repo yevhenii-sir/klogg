@@ -81,6 +81,8 @@ int main( int argc, char* argv[] )
     config.setSearchReadBufferSizeLines( 10 );
     config.setIndexReadBufferSizeMb( 1 );
     config.setUseSearchResultsCache( false );
+    config.setConfirmTabClose( false );
+    config.save();
 
     auto higthlighters = HighlighterSetCollection::getSynced();
 

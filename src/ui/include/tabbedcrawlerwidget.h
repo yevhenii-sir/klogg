@@ -27,6 +27,9 @@
 #include <qwidget.h>
 
 #include "loadingstatus.h"
+#include "tabgroup.h"
+
+class QMenu;
 
 // This class represents glogg's main widget, a tabbed
 // group of CrawlerWidgets.
@@ -87,8 +90,16 @@ class TabbedCrawlerWidget : public QTabWidget {
     void loadIcons();
     void updateIcon( int index );
 
+  public Q_SLOTS:
+    void onGroupsChanged();
+
   private Q_SLOTS:
     void showContextMenu( int tab, QPoint globalPoint );
+
+  private:
+    void buildGroupSubmenu( QMenu* menu, int tabIndex );
+    void createNewGroupDialog( int tabIndex );
+    void showGroupContextMenu( const QString& groupId, QPoint globalPoint );
 
   private:
     QIcon olddata_icon_;

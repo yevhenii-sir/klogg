@@ -12,6 +12,8 @@ add_library(
   ${CMAKE_CURRENT_SOURCE_DIR}/include/predefinedfilters.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/predefinedfilterscombobox.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/predefinedfiltersdialog.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/savefavoritedialog.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/filterdiffdialog.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/infoline.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/pathline.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/logmainview.h
@@ -33,6 +35,7 @@ add_library(
   ${CMAKE_CURRENT_SOURCE_DIR}/include/sessioninfo.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/signalmux.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/tabbedcrawlerwidget.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/tabgroup.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/viewinterface.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/viewtools.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/scratchpad.h
@@ -62,6 +65,8 @@ add_library(
   ${CMAKE_CURRENT_SOURCE_DIR}/src/predefinedfilters.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/predefinedfilterscombobox.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/predefinedfiltersdialog.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/savefavoritedialog.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/filterdiffdialog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/infoline.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/pathline.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/logmainview.cpp
@@ -82,6 +87,7 @@ add_library(
   ${CMAKE_CURRENT_SOURCE_DIR}/src/sessioninfo.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/signalmux.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/tabbedcrawlerwidget.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/tabgroup.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/viewtools.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/scratchpad.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/tabbedscratchpad.cpp

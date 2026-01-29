@@ -385,6 +385,12 @@ QComboBox::drop-down {
     width: 18px;
 }
 
+QComboBox::down-arrow {
+    image: url(__SPIN_DOWN__);
+    width: 8px;
+    height: 8px;
+}
+
 QSpinBox::up-button, QDoubleSpinBox::up-button {
     subcontrol-origin: border;
     subcontrol-position: top right;

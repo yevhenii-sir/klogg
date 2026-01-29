@@ -56,6 +56,7 @@
 #include <windows.h>
 #endif // Q_OS_WIN
 
+#include <QCheckBox>
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QDialogButtonBox>
@@ -1488,6 +1489,31 @@ void MainWindow::closeTab( int index, ActionInitiator initiator )
     auto widget = qobject_cast<CrawlerWidget*>( mainTabWidget_.widget( index ) );
 
     assert( widget );
+
+    // Show confirmation dialog for user-initiated closes if enabled
+    if ( initiator == ActionInitiator::User ) {
+        auto& config = Configuration::get();
+        if ( config.confirmTabClose() ) {
+            const QString fileName = session_.getFilename( widget );
+            QMessageBox msgBox( this );
+            msgBox.setWindowTitle( tr( "Confirm Close" ) );
+            msgBox.setText( tr( "Close \"%1\"?" ).arg( QFileInfo( fileName ).fileName() ) );
+            msgBox.setStandardButtons( QMessageBox::Yes | QMessageBox::No );
+            msgBox.setDefaultButton( QMessageBox::Yes );
+
+            QCheckBox* dontAskCheckBox = new QCheckBox( tr( "Don't ask again" ) );
+            msgBox.setCheckBox( dontAskCheckBox );
+
+            if ( msgBox.exec() != QMessageBox::Yes ) {
+                return;
+            }
+
+            if ( dontAskCheckBox->isChecked() ) {
+                config.setConfirmTabClose( false );
+                config.save();
+            }
+        }
+    }
 
     widget->stopLoading();
     mainTabWidget_.removeCrawler( index );

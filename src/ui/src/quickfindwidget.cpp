@@ -73,6 +73,7 @@ QuickFindWidget::QuickFindWidget( QWidget* parent )
     auto* layout = new QHBoxLayout( this );
 
     layout->setContentsMargins( 6, 0, 6, 6 );
+    layout->setSpacing( 4 );
 
     closeButton_
         = setupToolButton( QLatin1String( "" ), QLatin1String( "darkclosebutton" ) );
@@ -87,7 +88,7 @@ QuickFindWidget::QuickFindWidget( QWidget* parent )
     // FIXME: set MinimumSize might be too constraining
     editQuickFind_->setMinimumSize( QSize( 150, 0 ) );
     editQuickFind_->lineEdit()->setMaxLength( std::numeric_limits<int>::max() / 1024 );
-    layout->addWidget( editQuickFind_ );
+    layout->addWidget( editQuickFind_, 1 );
 
     ignoreCaseCheck_ = new QCheckBox( "Ignore &case" );
     ignoreCaseCheck_->setChecked( Configuration::get().qfIgnoreCase() );

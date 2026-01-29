@@ -72,10 +72,12 @@
 
 #include "configuration.h"
 #include "dispatch_to.h"
+#include "filterdiffdialog.h"
 #include "fontutils.h"
 #include "infoline.h"
-#include "quickfindpattern.h"
 #include "predefinedfilters.h"
+#include "quickfindpattern.h"
+#include "savefavoritedialog.h"
 #include "savedsearches.h"
 #include "shortcuts.h"
 
@@ -476,55 +478,76 @@ void CrawlerWidget::saveAsFavorite()
         return;
     }
 
-    bool ok = false;
-    const auto name = QInputDialog::getText( this, tr( "klogg" ), tr( "Favorite name:" ),
-                                             QLineEdit::Normal, currentText, &ok );
-    const auto trimmedName = name.trimmed();
-    if ( !ok || trimmedName.isEmpty() ) {
-        return;
-    }
-
     auto filters = PredefinedFiltersCollection::getSynced().getFilters();
     const auto useRegex = useRegexpButton_->isChecked();
 
-    auto existing = std::find_if(
-        filters.begin(), filters.end(), [ &trimmedName ]( const auto& filter ) {
-            return filter.name.compare( trimmedName, Qt::CaseInsensitive ) == 0;
-        } );
+    SaveFavoriteDialog dialog( currentText, filters, this );
+    if ( dialog.exec() != QDialog::Accepted ) {
+        return;
+    }
 
-    if ( existing != filters.end() ) {
-        const auto isSamePattern = ( existing->pattern == currentText );
-        const auto isSameRegex = ( existing->useRegex == useRegex );
+    const auto trimmedName = dialog.favoriteName();
+    if ( trimmedName.isEmpty() ) {
+        return;
+    }
+
+    if ( dialog.isCreateNew() ) {
+        // Check if a filter with this name already exists
+        auto existing = std::find_if(
+            filters.begin(), filters.end(), [ &trimmedName ]( const auto& filter ) {
+                return filter.name.compare( trimmedName, Qt::CaseInsensitive ) == 0;
+            } );
+
+        if ( existing != filters.end() ) {
+            const auto isSamePattern = ( existing->pattern == currentText );
+            const auto isSameRegex = ( existing->useRegex == useRegex );
+            if ( isSamePattern && isSameRegex ) {
+                QMessageBox::information(
+                    this, tr( "klogg" ),
+                    tr( "Favorite \"%1\" already exists with the same content." )
+                        .arg( trimmedName ) );
+                return;
+            }
+
+            // Show diff dialog for confirmation
+            FilterDiffDialog diffDialog( trimmedName, *existing, currentText, useRegex, this );
+            if ( diffDialog.exec() != QDialog::Accepted ) {
+                return;
+            }
+
+            existing->pattern = currentText;
+            existing->useRegex = useRegex;
+        }
+        else {
+            filters.push_back( { trimmedName, currentText, useRegex } );
+        }
+    }
+    else {
+        // Overwriting an existing filter
+        const int index = dialog.selectedExistingIndex();
+        if ( index < 0 || index >= filters.size() ) {
+            return;
+        }
+
+        auto& existing = filters[ index ];
+
+        const auto isSamePattern = ( existing.pattern == currentText );
+        const auto isSameRegex = ( existing.useRegex == useRegex );
         if ( isSamePattern && isSameRegex ) {
             QMessageBox::information(
                 this, tr( "klogg" ),
-                tr( "Favorite \"%1\" already exists with the same content." ).arg( trimmedName ) );
+                tr( "Favorite \"%1\" already has the same content." ).arg( existing.name ) );
             return;
         }
 
-        const auto existingRegexText = existing->useRegex ? tr( "On" ) : tr( "Off" );
-        const auto newRegexText = useRegex ? tr( "On" ) : tr( "Off" );
-        const auto details = tr( "Existing:\n  Pattern: %1\n  Regex: %2\n\n"
-                                 "New:\n  Pattern: %3\n  Regex: %4" )
-                                 .arg( existing->pattern, existingRegexText, currentText,
-                                       newRegexText );
-
-        QMessageBox confirmDialog( QMessageBox::Question, tr( "klogg" ),
-                                   tr( "Favorite \"%1\" already exists. Overwrite it?" )
-                                       .arg( trimmedName ),
-                                   QMessageBox::Yes | QMessageBox::No, this );
-        confirmDialog.setDefaultButton( QMessageBox::No );
-        confirmDialog.setDetailedText( details );
-
-        if ( confirmDialog.exec() != QMessageBox::Yes ) {
+        // Show diff dialog for confirmation
+        FilterDiffDialog diffDialog( existing.name, existing, currentText, useRegex, this );
+        if ( diffDialog.exec() != QDialog::Accepted ) {
             return;
         }
 
-        existing->pattern = currentText;
-        existing->useRegex = useRegex;
-    }
-    else {
-        filters.push_back( { trimmedName, currentText, useRegex } );
+        existing.pattern = currentText;
+        existing.useRegex = useRegex;
     }
 
     PredefinedFiltersCollection::getSynced().saveToStorage( filters );

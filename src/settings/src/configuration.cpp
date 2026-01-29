@@ -281,6 +281,9 @@ void Configuration::retrieveFromStorage( QSettings& settings )
 
     useTextWrap_ = settings.value( "view.textWrap", DefaultConfiguration.useTextWrap() ).toBool();
 
+    confirmTabClose_
+        = settings.value( "session.confirmTabClose", DefaultConfiguration.confirmTabClose_ ).toBool();
+
     style_ = settings.value( "view.style", DefaultConfiguration.style_ ).toString();
 
     if ( style_ == StyleManager::FusionKey || style_ == StyleManager::VistaKey
@@ -399,6 +402,7 @@ void Configuration::saveToStorage( QSettings& settings ) const
     settings.setValue( "session.loadLast", loadLastSession_ );
     settings.setValue( "session.multipleWindows", allowMultipleWindows_ );
     settings.setValue( "session.followOnLoad", followFileOnLoad_ );
+    settings.setValue( "session.confirmTabClose", confirmTabClose_ );
 
     settings.setValue( "logging.enableLogging", enableLogging_ );
     settings.setValue( "logging.verbosity", loggingLevel_ );

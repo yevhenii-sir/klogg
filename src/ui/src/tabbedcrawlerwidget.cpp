@@ -21,6 +21,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QColorDialog>
 #include <QDir>
 #include <QPalette>
 #include <QFileInfo>
@@ -39,6 +40,7 @@
 #include "log.h"
 #include "openfilehelper.h"
 #include "styles.h"
+#include "tabgroup.h"
 #include "tabnamemapping.h"
 
 namespace {
@@ -72,6 +74,11 @@ TabbedCrawlerWidget::TabbedCrawlerWidget()
     myTabBar_.setContextMenuPolicy( Qt::CustomContextMenu );
     connect( &myTabBar_, &CrawlerTabBar::showTabContextMenu, this,
              &TabbedCrawlerWidget::showContextMenu );
+
+    // Connect to group manager for tab appearance updates
+    auto& groupManager = TabGroupManager::getSynced();
+    connect( &groupManager, &TabGroupManager::groupsChanged, this,
+             &TabbedCrawlerWidget::onGroupsChanged );
 
     dispatchToMainThread( [ this ] { loadIcons(); } );
 }
@@ -228,6 +235,23 @@ void TabbedCrawlerWidget::showContextMenu( int tab, QPoint globalPoint )
     auto copyFullPath = menu.addAction( tr( "Copy full path" ) );
     auto openContainingFolder = menu.addAction( tr( "Open containing folder" ) );
     menu.addSeparator();
+
+    // Tab grouping submenu
+    auto groupMenu = menu.addMenu( tr( "Add to Group" ) );
+    buildGroupSubmenu( groupMenu, tab );
+
+    const auto tabPath = tabPathAt( tab );
+    auto& groupManager = TabGroupManager::getSynced();
+    const auto currentGroupId = groupManager.groupIdForTab( tabPath );
+    if ( !currentGroupId.isEmpty() ) {
+        auto removeFromGroup = menu.addAction( tr( "Remove from Group" ) );
+        connect( removeFromGroup, &QAction::triggered, this, [ tabPath, &groupManager ] {
+            groupManager.removeTabFromGroup( tabPath );
+            groupManager.save();
+        } );
+    }
+
+    menu.addSeparator();
     auto renameTab = menu.addAction( tr( "Rename tab" ) );
     auto resetTabName = menu.addAction( tr( "Reset tab name" ) );
 
@@ -275,12 +299,11 @@ void TabbedCrawlerWidget::showContextMenu( int tab, QPoint globalPoint )
     connect( openContainingFolder, &QAction::triggered, this,
              [ this, tab ] { showPathInFileExplorer( tabToolTip( tab ) ); } );
 
-    connect( renameTab, &QAction::triggered, this, [ this, tab ] {
+    connect( renameTab, &QAction::triggered, this, [ this, tab, tabPath ] {
         bool isNameEntered = false;
         auto newName = QInputDialog::getText( this, "Rename tab", "Tab name", QLineEdit::Normal,
                                               myTabBar_.tabText( tab ), &isNameEntered );
         if ( isNameEntered ) {
-            const auto tabPath = tabPathAt( tab );
             TabNameMapping::getSynced().setTabName( tabPath, newName ).save();
 
             if ( newName.isEmpty() ) {
@@ -292,8 +315,7 @@ void TabbedCrawlerWidget::showContextMenu( int tab, QPoint globalPoint )
         }
     } );
 
-    connect( resetTabName, &QAction::triggered, this, [ this, tab ] {
-        const auto tabPath = tabPathAt( tab );
+    connect( resetTabName, &QAction::triggered, this, [ this, tab, tabPath ] {
         TabNameMapping::getSynced().setTabName( tabPath, "" ).save();
         myTabBar_.setTabText( tab, QFileInfo( tabPath ).fileName() );
     } );
@@ -371,4 +393,166 @@ void TabbedCrawlerWidget::setTabDataStatus( int index, DataStatus status )
     myTabBar_.setTabData( index, tabData );
 
     updateIcon( index );
+}
+
+void TabbedCrawlerWidget::buildGroupSubmenu( QMenu* menu, int tabIndex )
+{
+    auto& groupManager = TabGroupManager::getSynced();
+    const auto tabPath = tabPathAt( tabIndex );
+    const auto currentGroupId = groupManager.groupIdForTab( tabPath );
+
+    // Add existing groups
+    for ( const auto& group : groupManager.groups() ) {
+        QPixmap colorIcon( 12, 12 );
+        colorIcon.fill( group.color );
+
+        auto* action = menu->addAction( QIcon( colorIcon ), group.name );
+        action->setCheckable( true );
+        action->setChecked( group.id == currentGroupId );
+
+        connect( action, &QAction::triggered, this, [ tabPath, groupId = group.id, &groupManager ] {
+            groupManager.addTabToGroup( groupId, tabPath );
+            groupManager.save();
+        } );
+    }
+
+    if ( !groupManager.groups().isEmpty() ) {
+        menu->addSeparator();
+    }
+
+    // Add "New Group..." action
+    auto* newGroupAction = menu->addAction( tr( "New Group..." ) );
+    connect( newGroupAction, &QAction::triggered, this,
+             [ this, tabIndex ] { createNewGroupDialog( tabIndex ); } );
+}
+
+void TabbedCrawlerWidget::createNewGroupDialog( int tabIndex )
+{
+    bool ok = false;
+    const auto groupName
+        = QInputDialog::getText( this, tr( "New Tab Group" ), tr( "Group name:" ),
+                                 QLineEdit::Normal, tr( "New Group" ), &ok );
+    if ( !ok || groupName.trimmed().isEmpty() ) {
+        return;
+    }
+
+    // Show color picker
+    const QColor defaultColor( "#5B8CFF" );
+    const QColor color = QColorDialog::getColor( defaultColor, this, tr( "Choose Group Color" ) );
+    if ( !color.isValid() ) {
+        return;
+    }
+
+    auto& groupManager = TabGroupManager::getSynced();
+    groupManager.createGroup( groupName.trimmed(), color );
+
+    // Add the current tab to the new group
+    const auto tabPath = tabPathAt( tabIndex );
+    const auto& groups = groupManager.groups();
+    if ( !groups.isEmpty() ) {
+        groupManager.addTabToGroup( groups.last().id, tabPath );
+    }
+
+    groupManager.save();
+}
+
+void TabbedCrawlerWidget::onGroupsChanged()
+{
+    // Update tab appearance based on groups
+    for ( int i = 0; i < count(); ++i ) {
+        const auto tabPath = tabPathAt( i );
+        auto& groupManager = TabGroupManager::get();
+        const auto* group = groupManager.groupForTab( tabPath );
+
+        // Get original tab name (without any group prefix)
+        const auto tabName = TabNameMapping::getSynced().tabName( tabPath );
+        const auto tabLabel = tabName.isEmpty() ? QFileInfo( tabPath ).fileName() : tabName;
+
+        if ( group ) {
+            // Update tooltip to show group membership
+            const auto originalTooltip = QDir::toNativeSeparators( tabPath );
+            myTabBar_.setTabToolTip( i, tr( "%1\nGroup: %2" ).arg( originalTooltip, group->name ) );
+
+            // Set tab text color to group color for visual indicator
+            myTabBar_.setTabTextColor( i, group->color );
+
+            // Add group indicator prefix to tab text
+            myTabBar_.setTabText( i, QString::fromUtf8( "\xE2\x97\x8F " ) + tabLabel ); // Circle prefix
+        }
+        else {
+            myTabBar_.setTabToolTip( i, QDir::toNativeSeparators( tabPath ) );
+
+            // Reset to default text color
+            myTabBar_.setTabTextColor( i, palette().color( QPalette::WindowText ) );
+
+            // Remove any group prefix
+            myTabBar_.setTabText( i, tabLabel );
+        }
+    }
+}
+
+void TabbedCrawlerWidget::showGroupContextMenu( const QString& groupId, QPoint globalPoint )
+{
+    auto& groupManager = TabGroupManager::getSynced();
+    auto* group = groupManager.groupById( groupId );
+    if ( !group ) {
+        return;
+    }
+
+    QMenu menu( this );
+
+    auto* collapseAction = menu.addAction( group->collapsed ? tr( "Expand Group" ) : tr( "Collapse Group" ) );
+    connect( collapseAction, &QAction::triggered, this, [ groupId, &groupManager ] {
+        groupManager.toggleCollapsed( groupId );
+        groupManager.save();
+    } );
+
+    menu.addSeparator();
+
+    auto* renameAction = menu.addAction( tr( "Rename Group..." ) );
+    connect( renameAction, &QAction::triggered, this, [ this, groupId, groupName = group->name, &groupManager ] {
+        bool ok = false;
+        const auto newName = QInputDialog::getText( this, tr( "Rename Group" ), tr( "Group name:" ),
+                                                    QLineEdit::Normal, groupName, &ok );
+        if ( ok && !newName.trimmed().isEmpty() ) {
+            groupManager.renameGroup( groupId, newName.trimmed() );
+            groupManager.save();
+        }
+    } );
+
+    auto* colorAction = menu.addAction( tr( "Change Color..." ) );
+    connect( colorAction, &QAction::triggered, this, [ this, groupId, groupColor = group->color, &groupManager ] {
+        const QColor newColor = QColorDialog::getColor( groupColor, this, tr( "Choose Group Color" ) );
+        if ( newColor.isValid() ) {
+            groupManager.setGroupColor( groupId, newColor );
+            groupManager.save();
+        }
+    } );
+
+    menu.addSeparator();
+
+    auto* ungroupAction = menu.addAction( tr( "Ungroup All" ) );
+    connect( ungroupAction, &QAction::triggered, this, [ groupId, &groupManager ] {
+        groupManager.ungroupAll( groupId );
+        groupManager.save();
+    } );
+
+    auto* closeAllAction = menu.addAction( tr( "Close All in Group" ) );
+    connect( closeAllAction, &QAction::triggered, this, [ this, groupId, &groupManager ] {
+        const auto* targetGroup = groupManager.groupById( groupId );
+        if ( targetGroup ) {
+            // Collect tabs to close
+            QList<int> tabsToClose;
+            for ( int i = 0; i < count(); ++i ) {
+                if ( targetGroup->tabPaths.contains( tabPathAt( i ) ) ) {
+                    tabsToClose.prepend( i ); // Prepend to close from end
+                }
+            }
+            for ( int tabIndex : tabsToClose ) {
+                Q_EMIT tabCloseRequested( tabIndex );
+            }
+        }
+    } );
+
+    menu.exec( globalPoint );
 }

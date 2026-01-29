@@ -118,6 +118,7 @@ Section "Qt Runtime libraries" qtlibs
     File release\${QT_MAJOR}Xml.dll
 !if ${QT_MAJOR} == "Qt6"
     File release\${QT_MAJOR}Core5Compat.dll
+    File release\${QT_MAJOR}Svg.dll
 !endif
 
     SetOutPath $INSTDIR\platforms
@@ -128,6 +129,9 @@ Section "Qt Runtime libraries" qtlibs
 !else
     File release\styles\qwindowsvistastyle.dll
 !endif
+
+    SetOutPath $INSTDIR\imageformats
+    File release\imageformats\qsvg.dll
 
 SectionEnd
 
@@ -198,9 +202,13 @@ Section "Uninstall"
     Delete "$INSTDIR\Qt6Concurrent.dll"
     Delete "$INSTDIR\Qt6Xml.dll"
     Delete "$INSTDIR\Qt6Core5Compat.dll"
+    Delete "$INSTDIR\Qt6Svg.dll"
     Delete "$INSTDIR\platforms\qwindows.dll"
     Delete "$INSTDIR\platforms\qminimal.dll"
     Delete "$INSTDIR\styles\qwindowsvistastyle.dll"
+    Delete "$INSTDIR\styles\qmodernwindowsstyle.dll"
+    Delete "$INSTDIR\imageformats\qsvg.dll"
+    RMDir "$INSTDIR\imageformats"
     Delete "$INSTDIR\msvcp140.dll"
     Delete "$INSTDIR\msvcp140_1.dll"
     Delete "$INSTDIR\vcruntime140.dll"

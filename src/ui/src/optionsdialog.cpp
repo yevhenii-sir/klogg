@@ -398,6 +398,7 @@ void OptionsDialog::updateDialogFromConfig()
     followFileOnLoadCheckBox->setChecked( config.followFileOnLoad() );
     minimizeToTrayCheckBox->setChecked( config.minimizeToTray() );
     multipleWindowsCheckBox->setChecked( config.allowMultipleWindows() );
+    confirmTabCloseCheckBox->setChecked( config.confirmTabClose() );
 
     loggingCheckBox->setChecked( config.enableLogging() );
     verbositySpinBox->setValue( config.loggingLevel() );
@@ -579,6 +580,7 @@ void OptionsDialog::updateConfigFromDialog()
     config.setFollowFileOnLoad( followFileOnLoadCheckBox->isChecked() );
     config.setAllowMultipleWindows( multipleWindowsCheckBox->isChecked() );
     config.setMinimizeToTray( minimizeToTrayCheckBox->isChecked() );
+    config.setConfirmTabClose( confirmTabCloseCheckBox->isChecked() );
     config.setEnableLogging( loggingCheckBox->isChecked() );
     config.setLoggingLevel( verbositySpinBox->value() );
     
