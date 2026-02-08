@@ -367,6 +367,7 @@ void SearchOperation::doSearch( SearchData& searchData, LineNumber initialLine )
             searchGraph, 1, [ & ]( const BlockDataType& blockData ) {
                 if ( interruptRequested_ ) {
                     LOG_INFO << "Match processor interrupted";
+                    delete blockData;
                     return tbb::flow::continue_msg{};
                 }
 
@@ -451,8 +452,15 @@ void SearchOperation::doSearch( SearchData& searchData, LineNumber initialLine )
         chunkStart = chunkStart + nbLinesInChunk;
         fileReadingDuration += chunkReadTime;
 
-        while ( !blockPrefetcher.try_put( blockData ) && !interruptRequested_ ) {
-            std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
+        bool pushed = false;
+        while ( !pushed && !interruptRequested_ ) {
+            pushed = blockPrefetcher.try_put( blockData );
+            if ( !pushed ) {
+                std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
+            }
+        }
+        if ( !pushed ) {
+            delete blockData;
         }
     }
 

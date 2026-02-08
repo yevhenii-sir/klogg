@@ -432,12 +432,19 @@ void LogFilteredData::rebuildContextLinesList() const
     // lines to be calculated around marks instead of matches when visibility is set to show
     // only marks.
 
-    // If no context lines needed, use simple list of matching lines
+    // If no context lines needed, use simple list of matching lines plus marks
     if ( contextLinesBefore_ == 0 && contextLinesAfter_ == 0 ) {
         contextLinesList_.clear();
-        // Always use matching_lines_ for context lines, not currentResultArray()
-        contextLinesList_.reserve( matching_lines_.cardinality() );
-        matching_lines_.iterate(
+        // Build union of matching_lines_ and marks_ (respecting visibility)
+        SearchResultArray combinedLines;
+        if ( visibility_.testFlag( VisibilityFlags::Matches ) ) {
+            combinedLines |= matching_lines_;
+        }
+        if ( visibility_.testFlag( VisibilityFlags::Marks ) ) {
+            combinedLines |= marks_;
+        }
+        contextLinesList_.reserve( combinedLines.cardinality() );
+        combinedLines.iterate(
             []( uint64_t line, void* context ) -> bool {
                 static_cast<klogg::vector<LineNumber>*>( context )->emplace_back( LineNumber( line ) );
                 return true;
@@ -467,40 +474,50 @@ void LogFilteredData::rebuildContextLinesList() const
                                 static_cast<uint64_t>( contextLinesBefore_ ),
                                 static_cast<uint64_t>( contextLinesAfter_ ) };
 
-    // Iterate through all matching lines and add context lines
-    // Always use matching_lines_ for context lines, not currentResultArray()
-    matching_lines_.iterate(
-        []( uint64_t matchLine, void* context ) -> bool {
-            auto* data = static_cast<ContextData*>( context );
-            
-            // Add the matching line itself
-            data->linesSet->insert( matchLine );
+    // Lambda to add a line and its context to the set
+    auto addLineWithContext = []( uint64_t matchLine, void* context ) -> bool {
+        auto* data = static_cast<ContextData*>( context );
 
-            // Add context lines before
-            for ( uint64_t i = 1; i <= data->contextLinesBefore; ++i ) {
-                const LineNumber::UnderlyingType contextLine = matchLine >= i ? matchLine - i : 0;
-                if ( contextLine < data->totalLines ) {
-                    data->linesSet->insert( contextLine );
-                }
+        // Add the line itself
+        data->linesSet->insert( matchLine );
+
+        // Add context lines before
+        for ( uint64_t i = 1; i <= data->contextLinesBefore; ++i ) {
+            const LineNumber::UnderlyingType contextLine = matchLine >= i ? matchLine - i : 0;
+            if ( contextLine < data->totalLines ) {
+                data->linesSet->insert( contextLine );
             }
+        }
 
-            // Add context lines after
-            for ( uint64_t i = 1; i <= data->contextLinesAfter; ++i ) {
-                const LineNumber::UnderlyingType contextLine = matchLine + i;
-                if ( contextLine < data->totalLines ) {
-                    data->linesSet->insert( contextLine );
-                }
+        // Add context lines after
+        for ( uint64_t i = 1; i <= data->contextLinesAfter; ++i ) {
+            const LineNumber::UnderlyingType contextLine = matchLine + i;
+            if ( contextLine < data->totalLines ) {
+                data->linesSet->insert( contextLine );
             }
+        }
 
-            return true;
-        },
-        static_cast<void*>( &contextData ) );
+        return true;
+    };
 
-    // Convert set to sorted vector (set is already sorted)
+    // Iterate through matching lines and add context (respecting visibility)
+    if ( visibility_.testFlag( VisibilityFlags::Matches ) ) {
+        matching_lines_.iterate( addLineWithContext, static_cast<void*>( &contextData ) );
+    }
+
+    // Also iterate through marks and add context (respecting visibility)
+    if ( visibility_.testFlag( VisibilityFlags::Marks ) ) {
+        marks_.iterate( addLineWithContext, static_cast<void*>( &contextData ) );
+    }
+
+    // Convert set to sorted vector (set is already sorted) and track max length
     contextLinesList_.clear();
     contextLinesList_.reserve( linesSet.size() );
+    maxLengthContext_ = 0_length;
     for ( const auto& line : linesSet ) {
         contextLinesList_.emplace_back( LineNumber( line ) );
+        maxLengthContext_
+            = qMax( maxLengthContext_, sourceLogData_->getLineLength( LineNumber( line ) ) );
     }
 
     contextLinesListValid_ = true;
@@ -770,7 +787,14 @@ LinesCount LogFilteredData::doGetNbLine() const
 // Implementation of the virtual function.
 LineLength LogFilteredData::doGetMaxLength() const
 {
-    return qMax( maxLength_, maxLengthMarks_ );
+    LineLength result = qMax( maxLength_, maxLengthMarks_ );
+    if ( contextLinesBefore_ > 0 || contextLinesAfter_ > 0 ) {
+        if ( !contextLinesListValid_ ) {
+            rebuildContextLinesList();
+        }
+        result = qMax( result, maxLengthContext_ );
+    }
+    return result;
 }
 
 // Implementation of the virtual function.

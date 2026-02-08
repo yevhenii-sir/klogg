@@ -206,6 +206,7 @@ class LogFilteredData : public AbstractLogData {
     // Cached list of line numbers including context lines (mutable for lazy evaluation)
     mutable klogg::vector<LineNumber> contextLinesList_;
     mutable bool contextLinesListValid_ = false;
+    mutable LineLength maxLengthContext_ = 0_length;
 
     Mutex searchProgressMutex_;
     std::tuple<LinesCount, int, LineNumber> searchProgress_;

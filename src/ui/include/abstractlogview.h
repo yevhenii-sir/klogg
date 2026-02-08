@@ -390,6 +390,9 @@ class AbstractLogView : public QAbstractScrollArea, public SearchableWidgetInter
     int charWidth_ = 1;
     int charHeight_ = 10;
 
+    // Configured font stored to prevent resets from style/theme changes
+    QFont configuredFont_;
+
     // Cached visible column count to avoid repeated calculations
     mutable LineLength cachedVisibleCols_ = 0_length;
     mutable bool cachedVisibleColsValid_ = false;

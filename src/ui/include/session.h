@@ -75,6 +75,12 @@ class Session : public std::enable_shared_from_this<Session> {
     // Throw an exception if it does not exist.
     void close( const ViewInterface* view );
 
+    // Open a merged view of multiple files, writing concatenated content to a temp file.
+    // Returns the new view, or nullptr on failure.
+    ViewInterface* openMerged( const std::vector<QString>& fileNames,
+                               const std::function<ViewInterface*()>& view_factory,
+                               const QString& tempDir );
+
     // Get the file name for the passed view.
     QString getFilename( const ViewInterface* view ) const;
 
@@ -166,6 +172,17 @@ class WindowSession {
         }
 
         appSession_->close( view );
+    }
+
+    ViewInterface* openMerged( const std::vector<QString>& fileNames,
+                               const std::function<ViewInterface*()>& view_factory,
+                               const QString& tempDir )
+    {
+        auto* view = appSession_->openMerged( fileNames, view_factory, tempDir );
+        if ( view ) {
+            openedFiles_.push_back( appSession_->getFilename( view ) );
+        }
+        return view;
     }
 
     QString getFilename( const ViewInterface* view ) const

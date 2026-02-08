@@ -576,3 +576,431 @@ SCENARIO( "marks and matches in filtered log data", "[logdata]" )
         }
     }
 }
+
+// ============================================================================
+// Issue 4: marks should be visible with empty filter + context lines > 0
+// ============================================================================
+SCENARIO( "marks visible with context lines and no search", "[logdata][context]" )
+{
+    LogDataLoader logDataLoader;
+
+    GIVEN( "loaded log data with marks but no search" )
+    {
+        auto filtered_data = logDataLoader.log_data.getNewFilteredData();
+
+        // Add some marks
+        filtered_data->addMark( 10_lnum );
+        filtered_data->addMark( 50_lnum );
+        filtered_data->addMark( 100_lnum );
+
+        WHEN( "context lines are zero" )
+        {
+            filtered_data->setContextLines( 0, 0 );
+
+            THEN( "marks are visible (3 marks)" )
+            {
+                REQUIRE( filtered_data->getNbLine() == 3_lcount );
+            }
+        }
+
+        WHEN( "context lines before is set to 2" )
+        {
+            filtered_data->setContextLines( 2, 0 );
+
+            THEN( "marks plus context before are visible" )
+            {
+                // Mark at 10 -> context lines 8, 9, 10 = 3
+                // Mark at 50 -> context lines 48, 49, 50 = 3
+                // Mark at 100 -> context lines 98, 99, 100 = 3
+                // Total = 9 (no overlap)
+                REQUIRE( filtered_data->getNbLine() == 9_lcount );
+            }
+
+            THEN( "line content is accessible" )
+            {
+                // First line should be context line 8
+                // getLineNumber adds +1 (converts 0-based to 1-based for display)
+                auto lineNum = filtered_data->getLineNumber( 0_lnum );
+                REQUIRE( lineNum.get() == 9 ); // 8 + 1 for 1-based display
+            }
+        }
+
+        WHEN( "context lines after is set to 2" )
+        {
+            filtered_data->setContextLines( 0, 2 );
+
+            THEN( "marks plus context after are visible" )
+            {
+                // Mark at 10 -> lines 10, 11, 12 = 3
+                // Mark at 50 -> lines 50, 51, 52 = 3
+                // Mark at 100 -> lines 100, 101, 102 = 3
+                // Total = 9 (no overlap)
+                REQUIRE( filtered_data->getNbLine() == 9_lcount );
+            }
+        }
+
+        WHEN( "context lines both before and after" )
+        {
+            filtered_data->setContextLines( 1, 1 );
+
+            THEN( "marks plus context in both directions" )
+            {
+                // Mark at 10 -> lines 9, 10, 11 = 3
+                // Mark at 50 -> lines 49, 50, 51 = 3
+                // Mark at 100 -> lines 99, 100, 101 = 3
+                // Total = 9 (no overlap)
+                REQUIRE( filtered_data->getNbLine() == 9_lcount );
+            }
+        }
+    }
+}
+
+SCENARIO( "marks visible with context lines and adjacent marks", "[logdata][context]" )
+{
+    LogDataLoader logDataLoader;
+
+    GIVEN( "loaded log data with adjacent marks" )
+    {
+        auto filtered_data = logDataLoader.log_data.getNewFilteredData();
+
+        // Marks close together so context ranges overlap
+        filtered_data->addMark( 10_lnum );
+        filtered_data->addMark( 12_lnum );
+
+        WHEN( "context lines cause overlap" )
+        {
+            filtered_data->setContextLines( 2, 2 );
+
+            THEN( "overlapping context lines are deduplicated" )
+            {
+                // Mark at 10 -> lines 8, 9, 10, 11, 12
+                // Mark at 12 -> lines 10, 11, 12, 13, 14
+                // Union = 8, 9, 10, 11, 12, 13, 14 = 7
+                REQUIRE( filtered_data->getNbLine() == 7_lcount );
+            }
+        }
+    }
+}
+
+SCENARIO( "marks at file boundary with context lines", "[logdata][context]" )
+{
+    LogDataLoader logDataLoader;
+
+    GIVEN( "loaded log data with mark at line 0" )
+    {
+        auto filtered_data = logDataLoader.log_data.getNewFilteredData();
+
+        filtered_data->addMark( 0_lnum );
+
+        WHEN( "context before is set" )
+        {
+            filtered_data->setContextLines( 3, 0 );
+
+            THEN( "no negative line numbers - just the mark line" )
+            {
+                REQUIRE( filtered_data->getNbLine() == 1_lcount );
+                // getLineNumber adds +1 (0-based to 1-based)
+                auto lineNum = filtered_data->getLineNumber( 0_lnum );
+                REQUIRE( lineNum.get() == 1 ); // 0 + 1
+            }
+        }
+    }
+
+    GIVEN( "loaded log data with mark at last line" )
+    {
+        auto filtered_data = logDataLoader.log_data.getNewFilteredData();
+
+        auto lastLine = LineNumber( SL_NB_LINES - 1 );
+        filtered_data->addMark( lastLine );
+
+        WHEN( "context after is set" )
+        {
+            filtered_data->setContextLines( 0, 3 );
+
+            THEN( "no lines beyond file end - just the mark line" )
+            {
+                REQUIRE( filtered_data->getNbLine() == 1_lcount );
+                // getLineNumber adds +1 (0-based to 1-based)
+                auto lineNum = filtered_data->getLineNumber( 0_lnum );
+                REQUIRE( lineNum.get() == lastLine.get() + 1 );
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Issue 4: marks + matches combined with context lines
+// ============================================================================
+SCENARIO( "marks and matches combined with context lines", "[logdata][context]" )
+{
+    LogDataLoader logDataLoader;
+
+    GIVEN( "loaded log data with search results and marks" )
+    {
+        auto filtered_data = logDataLoader.log_data.getNewFilteredData();
+
+        auto& config = Configuration::getSynced();
+        config.setSearchThreadPoolSize( 0 );
+        config.setUseParallelSearch( false );
+
+        SafeQSignalSpy searchProgressSpy{ filtered_data.get(),
+                                          &LogFilteredData::searchProgressed };
+
+        // Search for lines ending in "9" -> matches lines 9, 19, 29, ...
+        runSearch( filtered_data.get(), "this is line [0-9]{5}9", searchProgressSpy );
+        REQUIRE( filtered_data->getNbMatches() == 50_lcount );
+
+        // Add a mark at a non-matching line
+        filtered_data->addMark( 5_lnum );
+
+        WHEN( "context lines are set with both marks and matches visible" )
+        {
+            filtered_data->setContextLines( 1, 1 );
+
+            THEN( "context includes lines around both marks and matches" )
+            {
+                // Matches at 9, 19, 29, ... + mark at 5
+                // Context around match at 9: lines 8, 9, 10
+                // Context around mark at 5: lines 4, 5, 6
+                // Context around match at 19: lines 18, 19, 20
+                // etc.
+                auto nbLines = filtered_data->getNbLine();
+                // Should be more than just matches + 1 mark
+                REQUIRE( nbLines.get() > 51 );
+            }
+        }
+
+        WHEN( "only marks visible with context" )
+        {
+            filtered_data->setVisibility( VisibilityFlags::Marks );
+            filtered_data->setContextLines( 1, 1 );
+
+            THEN( "context is around marks only" )
+            {
+                // Mark at 5 -> lines 4, 5, 6 = 3
+                REQUIRE( filtered_data->getNbLine() == 3_lcount );
+            }
+
+            THEN( "line content is correct" )
+            {
+                auto line = filtered_data->getExpandedLineString( 1_lnum );
+                REQUIRE( line.contains( "000005" ) );
+            }
+        }
+
+        WHEN( "only matches visible with context" )
+        {
+            filtered_data->setVisibility( VisibilityFlags::Matches );
+            filtered_data->setContextLines( 1, 0 );
+
+            THEN( "context is around matches only, mark excluded from context source" )
+            {
+                // 50 matches, each with 1 line before
+                // Some overlap at boundaries (e.g. line 18 is context for match 19,
+                // but 20 is context for nothing unless there's a match at 21)
+                auto nbLines = filtered_data->getNbLine();
+                REQUIRE( nbLines.get() > 50 );
+                REQUIRE( nbLines.get() <= 100 );
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Issue 1: maxLength should include context line lengths
+// ============================================================================
+SCENARIO( "max length includes context line lengths", "[logdata][context]" )
+{
+    // We need a custom data file with varying line lengths
+    QTemporaryFile file{ "maxlen_context_test_XXXXXX" };
+
+    REQUIRE( file.open() );
+
+    // Write lines with varying lengths:
+    // Line 0: short (10 chars)
+    // Line 1: short (10 chars)
+    // Line 2: very long (200 chars) - this will be a context line
+    // Line 3: short (10 chars) - this will be a match
+    // Line 4: short (10 chars)
+    file.write( "short_ln_0\n" );     // line 0
+    file.write( "short_ln_1\n" );     // line 1
+
+    // line 2: a very long line (non-matching, will be context)
+    QByteArray longLine( 200, 'X' );
+    file.write( longLine );
+    file.write( "\n" );
+
+    file.write( "MATCH_ln_3\n" );     // line 3: will match
+    file.write( "short_ln_4\n" );     // line 4
+    file.flush();
+
+    LogData logData;
+    SafeQSignalSpy loadSpy( &logData, SIGNAL( loadingFinished( LoadingStatus ) ) );
+    logData.attachFile( file.fileName() );
+    REQUIRE( loadSpy.safeWait( 10000 ) );
+    REQUIRE( logData.getNbLine() == 5_lcount );
+
+    auto filtered_data = logData.getNewFilteredData();
+
+    auto& config = Configuration::getSynced();
+    config.setSearchThreadPoolSize( 0 );
+    config.setUseParallelSearch( false );
+    config.setRegexpEnging( RegexpEngine::QRegularExpression );
+
+    SafeQSignalSpy searchProgressSpy{ filtered_data.get(),
+                                      &LogFilteredData::searchProgressed };
+
+    // Search for "MATCH" - only line 3 matches
+    runSearch( filtered_data.get(), "MATCH", searchProgressSpy );
+    REQUIRE( filtered_data->getNbMatches() == 1_lcount );
+
+    GIVEN( "no context lines" )
+    {
+        filtered_data->setContextLines( 0, 0 );
+
+        THEN( "maxLength is the match line length" )
+        {
+            // "MATCH_ln_3" has 10 chars, expanded with tab = 10
+            REQUIRE( filtered_data->getMaxLength() == LineLength( 10 ) );
+        }
+    }
+
+    GIVEN( "context lines that include the long line" )
+    {
+        // Context before = 1 means line 2 (the 200-char line) is included
+        filtered_data->setContextLines( 1, 0 );
+
+        THEN( "maxLength includes the long context line" )
+        {
+            REQUIRE( filtered_data->getMaxLength() >= LineLength( 200 ) );
+        }
+
+        THEN( "number of visible lines includes context" )
+        {
+            // Match at line 3, context before = line 2
+            REQUIRE( filtered_data->getNbLine() == 2_lcount );
+        }
+    }
+
+    GIVEN( "context lines that include lines after" )
+    {
+        filtered_data->setContextLines( 0, 1 );
+
+        THEN( "maxLength includes context after line" )
+        {
+            // Match at line 3, context after = line 4 (short)
+            // Max should still be 10
+            REQUIRE( filtered_data->getMaxLength() == LineLength( 10 ) );
+        }
+    }
+}
+
+// ============================================================================
+// Issue 4: context lines with no search but with marks (zero context path)
+// ============================================================================
+SCENARIO( "marks appear when no search and zero context", "[logdata][context]" )
+{
+    LogDataLoader logDataLoader;
+
+    GIVEN( "loaded log data with marks, no search, no context" )
+    {
+        auto filtered_data = logDataLoader.log_data.getNewFilteredData();
+
+        filtered_data->addMark( 10_lnum );
+        filtered_data->addMark( 20_lnum );
+
+        // No search, no context lines
+        filtered_data->setContextLines( 0, 0 );
+
+        THEN( "marks are visible" )
+        {
+            REQUIRE( filtered_data->getNbLine() == 2_lcount );
+        }
+
+        THEN( "line numbers map to marks" )
+        {
+            auto line0 = filtered_data->getMatchingLineNumber( 0_lnum );
+            auto line1 = filtered_data->getMatchingLineNumber( 1_lnum );
+            REQUIRE( line0 == 10_lnum );
+            REQUIRE( line1 == 20_lnum );
+        }
+    }
+}
+
+// ============================================================================
+// Issue 1: context lines getLineNumber mapping
+// ============================================================================
+SCENARIO( "context lines getLineNumber returns correct mapping", "[logdata][context]" )
+{
+    LogDataLoader logDataLoader;
+
+    GIVEN( "loaded log data with search and context" )
+    {
+        auto filtered_data = logDataLoader.log_data.getNewFilteredData();
+
+        auto& config = Configuration::getSynced();
+        config.setSearchThreadPoolSize( 0 );
+        config.setUseParallelSearch( false );
+
+        SafeQSignalSpy searchProgressSpy{ filtered_data.get(),
+                                          &LogFilteredData::searchProgressed };
+
+        // Match lines ending in "9" -> first match at line 9
+        runSearch( filtered_data.get(), "this is line [0-9]{5}9", searchProgressSpy );
+
+        WHEN( "context lines are set to 2 before" )
+        {
+            filtered_data->setContextLines( 2, 0 );
+
+            THEN( "getLineNumber returns correct original line numbers" )
+            {
+                // First match is at line 9, context before = lines 7, 8
+                // So context list starts with: 7, 8, 9, ...
+                // getLineNumber adds +1 (0-based to 1-based for display)
+                auto line0 = filtered_data->getLineNumber( 0_lnum );
+                auto line1 = filtered_data->getLineNumber( 1_lnum );
+                auto line2 = filtered_data->getLineNumber( 2_lnum );
+                REQUIRE( line0.get() == 8 );  // line 7 + 1
+                REQUIRE( line1.get() == 9 );  // line 8 + 1
+                REQUIRE( line2.get() == 10 ); // line 9 + 1
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Issue 1: getLineLength with context lines
+// ============================================================================
+SCENARIO( "getLineLength works with context lines", "[logdata][context]" )
+{
+    LogDataLoader logDataLoader;
+
+    GIVEN( "loaded log data with search and context" )
+    {
+        auto filtered_data = logDataLoader.log_data.getNewFilteredData();
+
+        auto& config = Configuration::getSynced();
+        config.setSearchThreadPoolSize( 0 );
+        config.setUseParallelSearch( false );
+
+        SafeQSignalSpy searchProgressSpy{ filtered_data.get(),
+                                          &LogFilteredData::searchProgressed };
+
+        runSearch( filtered_data.get(), "this is line [0-9]{5}9", searchProgressSpy );
+
+        WHEN( "context lines are set" )
+        {
+            filtered_data->setContextLines( 1, 0 );
+
+            THEN( "getLineLength returns valid length for all context lines" )
+            {
+                auto nbLines = filtered_data->getNbLine();
+                for ( LineNumber::UnderlyingType i = 0; i < nbLines.get(); ++i ) {
+                    auto len = filtered_data->getLineLength( LineNumber( i ) );
+                    // All test lines have tabs so expanded length > 0
+                    REQUIRE( len.get() > 0 );
+                }
+            }
+        }
+    }
+}

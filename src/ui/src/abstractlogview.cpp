@@ -401,6 +401,7 @@ AbstractLogView::AbstractLogView( const AbstractLogData* newLogData,
     , followElasticHook_( HookThreshold )
     , logData_( newLogData )
     , searchEnd_( newLogData->getNbLine().get() )
+    , configuredFont_( this->font() )
     , quickFindPattern_( quickFindPattern )
     , quickFind_( new QuickFind( *newLogData ) )
     , pixmapFontMetrics_( this->font() )
@@ -465,6 +466,14 @@ void AbstractLogView::changeEvent( QEvent* changeEvent )
         if ( !isActiveWindow() )
             autoScrollTimer_.stop();
     }
+
+    // Restore the configured font if Qt resets the widget font (e.g., style change)
+    if ( changeEvent->type() == QEvent::FontChange ) {
+        if ( configuredFont_ != QFont{} && this->font() != configuredFont_ ) {
+            setFont( configuredFont_ );
+        }
+    }
+
     viewport()->update();
 }
 
@@ -1407,7 +1416,14 @@ void AbstractLogView::textWrapSet( bool checked )
     if ( wasAtBottom ) {
         verticalScrollBar()->setValue( verticalScrollBar()->maximum() );
     }
-    
+    else {
+        // If a line is selected, scroll to keep it visible
+        const auto selected = selection_.selectedLine();
+        if ( selected.has_value() ) {
+            displayLine( *selected );
+        }
+    }
+
     forceRefresh();
 }
 
@@ -1734,6 +1750,7 @@ void AbstractLogView::updateData()
 
 void AbstractLogView::updateFont( const QFont& font )
 {
+    configuredFont_ = font;
     setFont( font );
     pixmapFontMetrics_ = pixmapFontMetrics( font );
     // Invalidate cached column count - font change affects charWidth_
@@ -2592,17 +2609,26 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
     // We can't pre-calculate this in updateDisplaySize because wrapped line count is variable.
     // Allocate height for all remaining lines to ensure complete rendering.
     if ( useTextWrap_ && paintDevice == &textAreaCache_.pixmap_ ) {
-        // Runtime evidence: wrapped drawing can exceed viewport height (bottom alignment),
-        // so allocate a bounded buffer big enough to avoid clipping.
-        // 2x viewport height is usually sufficient, but when the viewport is very small
-        // the *last* wrapped line can be taller than 2x, causing bottom-alignment to shift
-        // into undrawn space (blank/gray). Use a small fixed minimum and a hard cap.
+        // Allocate a buffer large enough for wrapped content visible from firstLine_.
+        // The height must accommodate the tallest wrapped line (which could be very long)
+        // plus enough context for bottom-alignment scrolling.
         static constexpr int MinWrapCacheHeightPx = 512;
-        static constexpr int MaxWrapCacheHeightPx = 4096;
-        const int estimatedHeight = std::clamp( std::max( viewport()->height() * 2, MinWrapCacheHeightPx ),
-                                                MinWrapCacheHeightPx, MaxWrapCacheHeightPx );
+        static constexpr int AbsoluteMaxWrapCacheHeightPx = 65536;
+        // Estimate max wrapped line height from the longest line in the data
+        const auto visibleCols = getNbVisibleCols();
+        const int maxWrappedLineHeight
+            = ( visibleCols > 0_length )
+                  ? ( static_cast<int>( logData_->getMaxLength().get() / visibleCols.get() + 1 )
+                      * charHeight_ )
+                  : charHeight_;
+        // Need at least viewport height + one max wrapped line for bottom alignment
+        const int dynamicMax = std::max( viewport()->height() * 2,
+                                          viewport()->height() + maxWrappedLineHeight );
+        const int estimatedHeight = std::clamp( dynamicMax, MinWrapCacheHeightPx,
+                                                AbsoluteMaxWrapCacheHeightPx );
         const auto dpr = viewport()->devicePixelRatio();
-        const int requiredPixW = static_cast<int>( std::ceil( viewport()->width() * dpr ) );
+        // Add charWidth_ padding to prevent last-character clipping from font rounding
+        const int requiredPixW = static_cast<int>( std::ceil( ( viewport()->width() + charWidth_ ) * dpr ) );
         const int requiredPixH = static_cast<int>( std::ceil( estimatedHeight * dpr ) );
 
         const bool needsRecreate = textAreaCache_.pixmap_.isNull()
@@ -2619,7 +2645,7 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
     // LOG_DEBUG << "viewport size: " << viewport()->size().width();
     // LOG_DEBUG << "pixmap size: " << textPixmap.width();
     // Repaint the viewport
-    auto painter = pixmapPainter( paintDevice, this->font() );
+    auto painter = pixmapPainter( paintDevice, configuredFont_ );
     // LOG_DEBUG << "font: " << viewport()->font().family().toStdString();
     // LOG_DEBUG << "font painter: " << painter->font().family().toStdString();
 
@@ -3044,10 +3070,9 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
         }
     } // For each line
     
-    // Store the actual drawn height for proper alignment in paintEvent
-    textAreaCache_.actual_height_ = ( paintDevice == &textAreaCache_.pixmap_ )
-        ? std::min( yPos, paintDeviceHeight )
-        : yPos;
+    // Store the actual drawn height for proper alignment in paintEvent.
+    // Use the real yPos (not clamped) so bottom-alignment offsets are accurate.
+    textAreaCache_.actual_height_ = yPos;
     
     // Drawing complete; actual_height_ is used for bottom-alignment in paintEvent().
 }

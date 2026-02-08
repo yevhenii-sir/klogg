@@ -24,6 +24,11 @@
 #include <algorithm>
 #include <cassert>
 
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+
+
 #include "logdata.h"
 #include "logfiltereddata.h"
 #include "savedsearches.h"
@@ -67,6 +72,61 @@ ViewInterface* Session::open( const QString& file_name,
 void Session::close( const ViewInterface* view )
 {
     openFiles_.erase( openFiles_.find( view ) );
+}
+
+ViewInterface* Session::openMerged( const std::vector<QString>& fileNames,
+                                     const std::function<ViewInterface*()>& view_factory,
+                                     const QString& tempDir )
+{
+    if ( fileNames.empty() ) {
+        return nullptr;
+    }
+
+    // Build display name from source file names
+    QStringList shortNames;
+    for ( const auto& fn : fileNames ) {
+        shortNames << QFileInfo( fn ).fileName();
+    }
+    const QString mergedName = QString( "[Merged] %1" ).arg( shortNames.join( " + " ) );
+
+    // Create temp file with concatenated content
+    const QString tempFilePath = QDir( tempDir ).filePath(
+        QString( "klogg_merged_%1.log" )
+            .arg( QDateTime::currentMSecsSinceEpoch() ) );
+
+    QFile tempFile( tempFilePath );
+    if ( !tempFile.open( QIODevice::WriteOnly ) ) {
+        LOG_ERROR << "Failed to create merged temp file: " << tempFilePath.toStdString();
+        return nullptr;
+    }
+
+    // Copy raw bytes to preserve original encoding (no text transcoding)
+    for ( size_t fi = 0; fi < fileNames.size(); ++fi ) {
+        QFile sourceFile( fileNames[ fi ] );
+        if ( sourceFile.open( QIODevice::ReadOnly ) ) {
+            static constexpr qint64 BufSize = 65536;
+            char buf[ BufSize ];
+            qint64 bytesRead;
+            char lastByte = '\n'; // default to newline so we don't prepend one for the first file
+            while ( ( bytesRead = sourceFile.read( buf, BufSize ) ) > 0 ) {
+                tempFile.write( buf, bytesRead );
+                lastByte = buf[ bytesRead - 1 ];
+            }
+            // If this is not the last file and the file didn't end with a newline,
+            // insert one so the next file starts on its own line
+            if ( fi + 1 < fileNames.size() && lastByte != '\n' ) {
+                tempFile.write( "\n", 1 );
+            }
+        }
+        else {
+            LOG_ERROR << "Failed to open source file for merge: "
+                      << fileNames[ fi ].toStdString();
+        }
+    }
+    tempFile.close();
+
+    // Use the normal open flow with the temp file
+    return openAlways( tempFilePath, view_factory, {} );
 }
 
 QString Session::getFilename( const ViewInterface* view ) const

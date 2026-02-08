@@ -125,6 +125,7 @@ class MainWindow : public QMainWindow {
     void editPredefinedFilters( const QString& newFilter = {} );
     void importFilterFavorites();
     void exportFilterFavorites();
+    void mergeTabs();
     void options();
     void about();
     void aboutQt();
@@ -278,6 +279,7 @@ class MainWindow : public QMainWindow {
     QAction* joinDiscordAction;
     QAction* joinTelegramAction;
     QAction* generateDumpAction;
+    QAction* mergeTabsAction;
     QActionGroup* encodingGroup;
     QAction* addToFavoritesAction;
     QAction* addToFavoritesMenuAction;
