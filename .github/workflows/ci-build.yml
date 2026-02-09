@@ -239,7 +239,7 @@ jobs:
             qt_arch: win64_msvc2022_64
             arch: x64
             ssl_arch: -x64
-            cmake_opts:
+            cmake_opts: -DKLOGG_GENERIC_CPU=OFF
             label: x64-qt6
             artifacts_id: windows-x64-qt6
 
@@ -270,6 +270,9 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://www.firedaemon.com/download-firedaemon-openssl-1.1.1-zip" -OutFile openssl.zip
           7z x openssl.zip 
+
+      - name: Install PkgConfig
+        run: choco install pkgconfiglite -y
 
       - name: Set openssl paths
         shell: sh

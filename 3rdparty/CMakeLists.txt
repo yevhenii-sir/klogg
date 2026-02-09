@@ -70,6 +70,12 @@ elseif(KLOGG_USE_VECTORSCAN)
     endif()
   endif()
 
+  if(KLOGG_GENERIC_CPU)
+    set(VECTORSCAN_AVX OFF)
+  else()
+    set(VECTORSCAN_AVX ON)
+  endif()
+
   cpmaddpackage(
     NAME
     vectorscan
@@ -87,9 +93,9 @@ elseif(KLOGG_USE_VECTORSCAN)
     "BUILD_BENCHMARKS OFF"
     "BUILD_DOC OFF"
     "BUILD_CHIMERA OFF"
-    "BUILD_AVX2 OFF"
-    "BUILD_AVX512 OFF"
-    "BUILD_AVX512VBMI OFF"
+    "BUILD_AVX2 ${VECTORSCAN_AVX}"
+    "BUILD_AVX512 ${VECTORSCAN_AVX}"
+    "BUILD_AVX512VBMI ${VECTORSCAN_AVX}"
     "FAT_RUNTIME OFF"
   )
  
