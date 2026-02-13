@@ -58,6 +58,7 @@
 #include "configuration.h"
 #include "logger.h"
 #include "mainwindow.h"
+#include "sessioninfo.h"
 #include "styles.h"
 
 #include "cli.h"
@@ -68,6 +69,21 @@ const bool PersistentInfo::ForcePortable = true;
 #else
 const bool PersistentInfo::ForcePortable = false;
 #endif
+
+namespace {
+bool hasCommandLineOption( int argc, char* argv[], const char* shortOption,
+                           const char* longOption )
+{
+    for ( int i = 1; i < argc; ++i ) {
+        const auto argument = QString::fromLocal8Bit( argv[ i ] );
+        if ( argument == shortOption || argument == longOption ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+} // namespace
 
 void setApplicationAttributes( bool enableQtHdpi, int scaleFactorRounding )
 {
@@ -119,6 +135,20 @@ int main( int argc, char* argv[] )
     mi_process_init();
 #endif
 
+    const auto hasHelpOption = hasCommandLineOption( argc, argv, "-h", "--help" );
+    const auto hasVersionOption = hasCommandLineOption( argc, argv, "-v", "--version" );
+
+    if ( hasHelpOption || hasVersionOption ) {
+        int exitCode = EXIT_SUCCESS;
+        const QStringList earlyArgs = { QString::fromLocal8Bit( argv[ 0 ] ),
+                                        hasHelpOption ? QStringLiteral( "--help" )
+                                                      : QStringLiteral( "--version" ) };
+        CliParameters earlyParameters(
+            earlyArgs, false, [ &exitCode ]( int code ) { exitCode = code; } );
+        Q_UNUSED( earlyParameters );
+        return exitCode;
+    }
+
     const auto& config = Configuration::getSynced();
     setApplicationAttributes( config.enableQtHighDpi(), config.scaleFactorRounding() );
 
@@ -164,17 +194,27 @@ int main( int argc, char* argv[] )
         QThreadPool::globalInstance()->setMaxThreadCount( static_cast<int>( maxConcurrency ) );
     }
 
+    bool trackSessionDirtyState = false;
+    bool previousRunCrashed = false;
+
     if ( !parameters.multi_instance && app.isSecondary() ) {
         LOG_INFO << "Found another klogg, pid " << app.primaryPid();
         app.sendFilesToPrimaryInstance( parameters.filenames );
     }
     else {
+        auto& sessionInfo = SessionInfo::getSynced();
+        previousRunCrashed = sessionInfo.hadUncleanShutdown();
+        sessionInfo.setDirtyShutdown( true );
+        sessionInfo.save();
+        trackSessionDirtyState = true;
+
         // Apply theme based on theme mode
         StyleManager::applyStyle( config.style() );
 
         auto startNewSession = true;
         MainWindow* mw = nullptr;
         if ( parameters.load_session
+             || previousRunCrashed
              || ( parameters.filenames.empty() && !parameters.new_session
                   && config.loadLastSession() ) ) {
             mw = app.reloadSession();
@@ -201,5 +241,13 @@ int main( int argc, char* argv[] )
         app.startBackgroundTasks();
     }
 
-    return app.exec();
+    const auto exitCode = app.exec();
+
+    if ( trackSessionDirtyState ) {
+        auto& sessionInfo = SessionInfo::getSynced();
+        sessionInfo.setDirtyShutdown( false );
+        sessionInfo.save();
+    }
+
+    return exitCode;
 }

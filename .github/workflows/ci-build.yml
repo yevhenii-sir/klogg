@@ -239,7 +239,7 @@ jobs:
             qt_arch: win64_msvc2022_64
             arch: x64
             ssl_arch: -x64
-            cmake_opts: -DKLOGG_GENERIC_CPU=OFF
+            cmake_opts: -DKLOGG_GENERIC_CPU=OFF -DKLOGG_USE_VECTORSCAN=ON -DKLOGG_USE_HYPERSCAN=OFF
             label: x64-qt6
             artifacts_id: windows-x64-qt6
 
@@ -250,7 +250,7 @@ jobs:
             qt_archives: qtbase qtimageformats qttools qttranslations icu qtsvg
             qt_arch: win32_msvc2019
             arch: x86
-            cmake_opts:
+            cmake_opts: -DKLOGG_USE_SENTRY=OFF
             label: x86-qt5
             artifacts_id: windows-x86-qt5
 
@@ -274,6 +274,15 @@ jobs:
       - name: Install PkgConfig
         run: choco install pkgconfiglite -y
 
+      - name: Setup MSYS2 and install Ragel (x64 only)
+        if: ${{ matrix.config.arch == 'x64' }}
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-ragel
+
       - name: Set openssl paths
         shell: sh
         run: |
@@ -289,9 +298,118 @@ jobs:
         with:
           arch: ${{ matrix.config.arch }}
 
+      - name: Add MSYS2 toolchain to PATH (x64 only)
+        if: ${{ matrix.config.arch == 'x64' }}
+        shell: pwsh
+        run: |
+          $msysBinCandidates = @(
+            (Join-Path $env:RUNNER_TEMP "setup-msys2\mingw64\bin"),
+            (Join-Path $env:RUNNER_TEMP "setup-msys2\msys64\mingw64\bin"),
+            (Join-Path $env:RUNNER_TEMP "msys64\mingw64\bin"),
+            "C:\msys64\mingw64\bin"
+          )
+
+          $msysBin = $msysBinCandidates |
+            Where-Object { Test-Path (Join-Path $_ "ragel.exe") } |
+            Select-Object -First 1
+          if ( !$msysBin ) {
+            Write-Error "ragel.exe not found in MSYS2 mingw64 bin candidates: $($msysBinCandidates -join ', ')"
+            exit 1
+          }
+
+          $ragelPath = Join-Path $msysBin "ragel.exe"
+          Write-Host "Using ragel from $ragelPath"
+          $msysBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Verify Ragel (x64 only)
+        if: ${{ matrix.config.arch == 'x64' }}
+        shell: pwsh
+        run: |
+          ragel -v
+
       - uses: ./.github/actions/agent-build
+
+      - name: Verify vectorscan config in CMake cache (x64 only)
+        if: ${{ matrix.config.arch == 'x64' }}
+        shell: pwsh
+        run: |
+          $cachePath = Join-Path $env:GITHUB_WORKSPACE "build_root\CMakeCache.txt"
+          if ( !(Test-Path $cachePath) ) {
+            Write-Error "CMake cache not found at $cachePath"
+            exit 1
+          }
+
+          $vectorscan = Select-String -Path $cachePath -Pattern '^KLOGG_USE_VECTORSCAN:BOOL=ON$'
+          $hyperscan = Select-String -Path $cachePath -Pattern '^KLOGG_USE_HYPERSCAN:BOOL=OFF$'
+          if ( !$vectorscan -or !$hyperscan ) {
+            Write-Host "Current regex backend values:"
+            Select-String -Path $cachePath -Pattern '^KLOGG_USE_VECTORSCAN:BOOL=|^KLOGG_USE_HYPERSCAN:BOOL=' | ForEach-Object { $_.Line }
+            Write-Error "Unexpected vectorscan/hyperscan CMake settings"
+            exit 1
+          }
+
+      - name: Configure crash dumps for x86 integration tests
+        if: ${{ matrix.config.arch == 'x86' }}
+        shell: pwsh
+        run: |
+          $dumpDir = Join-Path $env:GITHUB_WORKSPACE "build_root\crash_dumps"
+          New-Item -ItemType Directory -Force -Path $dumpDir | Out-Null
+
+          $regPath = "HKCU\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\klogg_itests.exe"
+          reg add "$regPath" /v DumpFolder /t REG_EXPAND_SZ /d "$dumpDir" /f
+          reg add "$regPath" /v DumpCount /t REG_DWORD /d 10 /f
+          reg add "$regPath" /v DumpType /t REG_DWORD /d 2 /f
+
       - uses: ./.github/actions/agent-run-tests
+        id: run-tests
+        continue-on-error: true
+
+      - name: Collect x86 diagnostics on test failure
+        if: ${{ matrix.config.arch == 'x86' && steps.run-tests.outcome == 'failure' }}
+        shell: pwsh
+        run: |
+          $workspace = $env:GITHUB_WORKSPACE
+          $diagRoot = Join-Path $workspace "build_root\diagnostics"
+          New-Item -ItemType Directory -Force -Path $diagRoot | Out-Null
+
+          $ctestTemp = Join-Path $workspace "build_root\Testing\Temporary"
+          if ( Test-Path $ctestTemp ) {
+            Copy-Item $ctestTemp -Destination (Join-Path $diagRoot "Testing-Temporary") -Recurse -Force
+          }
+
+          $dumpDir = Join-Path $workspace "build_root\crash_dumps"
+          if ( Test-Path $dumpDir ) {
+            Copy-Item $dumpDir -Destination (Join-Path $diagRoot "crash_dumps") -Recurse -Force
+          }
+
+          $itestsPdb = Join-Path $workspace "build_root\output\klogg_itests.pdb"
+          if ( Test-Path $itestsPdb ) {
+            Copy-Item $itestsPdb -Destination $diagRoot -Force
+          }
+
+          $timeRange = (Get-Date).AddHours(-2)
+          Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $timeRange } -MaxEvents 300 |
+            Select-Object TimeCreated, Id, LevelDisplayName, ProviderName, Message |
+            Format-List | Out-File -FilePath (Join-Path $diagRoot "eventlog_application.txt") -Width 300
+          Get-WinEvent -FilterHashtable @{ LogName = 'System'; StartTime = $timeRange } -MaxEvents 300 |
+            Select-Object TimeCreated, Id, LevelDisplayName, ProviderName, Message |
+            Format-List | Out-File -FilePath (Join-Path $diagRoot "eventlog_system.txt") -Width 300
+
+      - name: Upload x86 diagnostics artifact
+        if: ${{ matrix.config.arch == 'x86' && steps.run-tests.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86-test-diagnostics
+          path: '${{ github.workspace }}\build_root\diagnostics\**\*'
+          if-no-files-found: warn
+
+      - name: Fail when tests fail
+        if: ${{ steps.run-tests.outcome == 'failure' }}
+        shell: sh
+        run: exit 1
+
       - uses: ./.github/actions/agent-package-win
+        if: ${{ steps.run-tests.outcome == 'success' }}
         with:
           s3-key-id: ${{ secrets.WIN_CS_KEY_ID }}
           s3-secret: ${{ secrets.WIN_CS_SECRET }}
@@ -299,6 +417,7 @@ jobs:
      
 # Final upload of all packages
       - uses: actions/upload-artifact@v4
+        if: ${{ steps.run-tests.outcome == 'success' }}
         with:
           name: packages-${{ matrix.config.artifacts_id }}
           path: '${{ env.KLOGG_BUILD_ROOT }}/packages/*'

@@ -111,6 +111,7 @@
 #include "sessioninfo.h"
 #include "shortcuts.h"
 #include "styles.h"
+#include "tabgroup.h"
 #include "tabbedcrawlerwidget.h"
 
 namespace {
@@ -201,6 +202,12 @@ MainWindow::MainWindow( WindowSession session )
              [ this ]( int index ) { this->closeTab( index, ActionInitiator::User ); } );
     connect( &mainTabWidget_, &TabbedCrawlerWidget::currentChanged, this,
              &MainWindow::currentTabChanged );
+    connect( &mainTabWidget_, &TabbedCrawlerWidget::tabsReordered, this,
+             &MainWindow::persistSessionState );
+
+    auto& groupManager = TabGroupManager::getSynced();
+    connect( &groupManager, &TabGroupManager::groupsChanged, this,
+             &MainWindow::persistSessionState );
 
     // Establish the QuickFindWidget and mux ( to send requests from the
     // QFWidget to the right window )
@@ -253,6 +260,8 @@ void MainWindow::reloadSession()
     const auto& config = Configuration::get();
     const auto followFileOnLoad = config.followFileOnLoad() && config.anyFileWatchEnabled();
 
+    suspendSessionPersistence_ = true;
+
     int current_file_index = -1;
     const auto openedFiles
         = session_.restore( [] { return new CrawlerWidget(); }, &current_file_index );
@@ -279,6 +288,8 @@ void MainWindow::reloadSession()
     }
 
     updateOpenedFilesMenu();
+    suspendSessionPersistence_ = false;
+    persistSessionState();
 }
 
 void MainWindow::loadInitialFile( QString fileName, bool followFile )
@@ -1502,11 +1513,12 @@ void MainWindow::closeTab( int index, ActionInitiator initiator )
 
     assert( widget );
 
+    const QString fileName = session_.getFilename( widget );
+
     // Show confirmation dialog for user-initiated closes if enabled
     if ( initiator == ActionInitiator::User ) {
         auto& config = Configuration::get();
         if ( config.confirmTabClose() ) {
-            const QString fileName = session_.getFilename( widget );
             QMessageBox msgBox( this );
             msgBox.setWindowTitle( tr( "Confirm Close" ) );
             msgBox.setText( tr( "Close \"%1\"?" ).arg( QFileInfo( fileName ).fileName() ) );
@@ -1531,12 +1543,21 @@ void MainWindow::closeTab( int index, ActionInitiator initiator )
     mainTabWidget_.removeCrawler( index );
 
     if ( initiator == ActionInitiator::User ) {
-        addRecentFile( session_.getFilename( widget ) );
+        addRecentFile( fileName );
+    }
+
+    if ( !shutdownInProgress_ ) {
+        auto& groupManager = TabGroupManager::get();
+        groupManager.removeTabFromGroup( fileName );
+        groupManager.save();
     }
 
     session_.close( widget );
 
     updateOpenedFilesMenu();
+    if ( !shutdownInProgress_ ) {
+        persistSessionState();
+    }
 
     widget->deleteLater();
 }
@@ -1574,6 +1595,8 @@ void MainWindow::currentTabChanged( int index )
         addToFavoritesAction->setEnabled( false );
         addToFavoritesMenuAction->setEnabled( false );
     }
+
+    persistSessionState();
 }
 
 void MainWindow::changeQFPattern( const QString& newPattern, bool ignoreCase, bool isRegex, bool isWholeWord )
@@ -1635,10 +1658,12 @@ void MainWindow::closeEvent( QCloseEvent* event )
         this->hide();
     }
     else {
-        const auto saveSettings = session_.close();
-        if ( saveSettings ) {
-            writeSettings();
-        }
+        session_.close();
+
+        shutdownInProgress_ = true;
+        suspendSessionPersistence_ = true;
+        writeSettings();
+        TabGroupManager::get().save();
 
         closeAll( ActionInitiator::App );
         trayIcon_->hide();
@@ -1884,6 +1909,7 @@ bool MainWindow::loadFile( const QString& fileName, bool followFile )
         }
 
         LOG_DEBUG << "Success loading file " << fileName.toStdString();
+        persistSessionState();
         return true;
     }
     else {
@@ -2279,7 +2305,17 @@ void MainWindow::writeSettings()
         auto view = qobject_cast<const CrawlerWidget*>( mainTabWidget_.widget( i ) );
         widget_list.emplace_back( view, 0UL, view->context() );
     }
-    session_.save( widget_list, saveGeometry() );
+    session_.save( widget_list, saveGeometry(), mainTabWidget_.currentIndex() );
+}
+
+void MainWindow::persistSessionState()
+{
+    if ( suspendSessionPersistence_ || shutdownInProgress_ ) {
+        return;
+    }
+
+    writeSettings();
+    TabGroupManager::get().save();
 }
 
 // Read settings from permanent storage

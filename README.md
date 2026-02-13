@@ -50,6 +50,7 @@ I try to keep a [changelog](CHANGELOG.md) with monthly changes.
 1. [About the Project](#about-the-project)
 1. [Installation](#installation)
 1. [Building](#building)
+1. [Third-Party Dependencies](#third-party-dependencies)
 1. [How to Get Help](#how-to-get-help)
 1. [Contributing](#contributing)
 1. [License](#license)
@@ -190,6 +191,68 @@ As indicated by this link from the official appimage documentation: https://docs
 Please review
 [BUILD.md](BUILD.md)
 for how to setup Klogg on your local machine for development and testing purposes.
+
+### SIMD benchmark snapshot (2026-02-14)
+
+The regex backend can be built with different vectorscan SIMD settings:
+
+- `AVX2=OFF, AVX512=OFF`
+- `AVX2=ON, AVX512=OFF`
+- `AVX2=ON, AVX512=ON`
+
+To quantify the impact, we ran `hsbench` with vectorscan `5.4.11` on the same host and corpus (`~245 MB`, `1,200,000` blocks), using block mode (`-N`) and repeated scans.
+
+Environment:
+
+- `macOS 26.2 x86_64`
+- `AppleClang 17`
+- vectorscan features reported by `hsbench`: `AVX2` or `AVX512VBMI` depending on build flags
+
+Results (mean throughput, Mbit/s):
+
+| Config | Log-mixed workload (n=5) | Relative vs. `OFF/OFF` | Regex-heavy workload (n=5) | Relative vs. `OFF/OFF` |
+| --- | ---: | ---: | ---: | ---: |
+| `AVX2=OFF, AVX512=OFF` | 326.80 | baseline | 324.66 | baseline |
+| `AVX2=ON, AVX512=OFF` | 326.46 | -0.10% | 319.12 | -1.71% |
+| `AVX2=ON, AVX512=ON` | 324.12 | -0.82% | 344.42 | +6.09% |
+
+Takeaway:
+
+- The impact is workload-dependent.
+- For log-mixed scans, differences were within about `1%`.
+- For regex-heavy scans, enabling AVX512 improved throughput by about `6-8%` (vs. lower-SIMD builds).
+- Disabling AVX512 for Windows/MSVC CI stability is expected to trade off up to about `8%` in regex-heavy engine-level benchmarks, while typical end-to-end UI workflows may show smaller differences.
+
+## Third-Party Dependencies
+
+All C++ dependencies are managed via [CPM](https://github.com/cpm-cmake/CPM.cmake) unless noted otherwise.
+
+| Dependency | Version / Commit | Source | Purpose |
+|---|---|---|---|
+| [Qt](https://www.qt.io/) | 5 or 6 | System | GUI framework (Core, Widgets, Concurrent, Network, Xml, Svg) |
+| [Vectorscan](https://github.com/VectorCamp/vectorscan) | `d29730e` | `VectorCamp/vectorscan` | Regex acceleration (default engine) |
+| [Hyperscan](https://github.com/variar/hyperscan) | `0931a40` | `variar/hyperscan` | Regex engine (optional alternative) |
+| [Boost](https://www.boost.org/) | - | System | Required by Vectorscan |
+| [simdutf](https://github.com/simdutf/simdutf) | 5.6.2 | `simdutf/simdutf` | SIMD UTF-8 processing |
+| [CRoaring](https://github.com/RoaringBitmap/CRoaring) | 4.2.1 | `RoaringBitmap/CRoaring` | Compressed bitmaps |
+| [streamvbyte](https://github.com/lemire/streamvbyte) | 1.0.0 | `lemire/streamvbyte` | Variable-byte integer encoding |
+| [robin_hood](https://github.com/martinus/robin-hood-hashing) | 3.11.2 | `martinus/robin-hood-hashing` | Fast hash maps/sets |
+| [xxHash](https://github.com/Cyan4973/xxHash) | 0.8.1 | `Cyan4973/xxHash` | Fast hashing |
+| [type_safe](https://github.com/foonathan/type_safe) | 0.2.4 | `foonathan/type_safe` | Type-safe utilities |
+| [oneTBB](https://github.com/variar/oneTBB) | `c9be1ac` | `variar/oneTBB` | Threading / parallelism |
+| [mimalloc](https://github.com/microsoft/mimalloc) | 2.1.7 | `microsoft/mimalloc` | Memory allocator |
+| [efsw](https://github.com/SpartanJ/efsw) | 1.4.1 | `SpartanJ/efsw` | File system watcher |
+| [Uchardet](https://gitlab.freedesktop.org/uchardet/uchardet) | 0.0.8 | `uchardet/uchardet` (GitLab) | Character encoding detection |
+| [maddy](https://github.com/variar/maddy) | `602e266` | `variar/maddy` | Markdown to HTML conversion |
+| [exprtk](https://github.com/variar/klogg_exprtk) | `1f9f4cd` | `variar/klogg_exprtk` | Expression parsing |
+| [KF5Archive](https://github.com/variar/klogg_karchive) | `f546bf6` | `variar/klogg_karchive` | Archive format support (tar, zip, bzip2, lzma) |
+| [KDSingleApplication](https://github.com/variar/KDSingleApplication) | `5b30db3` | `variar/KDSingleApplication` | Single-instance enforcement |
+| [KDToolBox](https://github.com/KDAB/KDToolBox) | `6468867` | `KDAB/KDToolBox` | Signal throttler |
+| [whereami](https://github.com/gpakosz/whereami) | `dcb52a0` | `gpakosz/whereami` | Executable path detection |
+| [Sentry Native SDK](https://github.com/getsentry/sentry-native) | `a3d5862` | `getsentry/sentry-native` | Crash reporting (optional) |
+| [macdeployqtfix](https://github.com/arl/macdeployqtfix) | `df88850` | `arl/macdeployqtfix` | macOS Qt deployment (macOS only) |
+| [Catch2](https://github.com/catchorg/Catch2) | 2.13.8 | `catchorg/Catch2` | Unit testing framework |
+| [backward-cpp](https://github.com/bombela/backward-cpp) | 1.6 | `bombela/backward-cpp` | Stack trace capture (testing) |
 
 ## How to Get Help
 

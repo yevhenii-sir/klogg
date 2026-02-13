@@ -35,6 +35,7 @@
 #include "logfiltereddata.h"
 
 #include "crawlerwidget.h"
+#include "shortcuts.h"
 
 static const qint64 SL_NB_LINES = 100LL;
 
@@ -190,6 +191,35 @@ struct CrawlerWidget::access_by<CrawlerWidgetPrivate> {
     {
         return crawler->logMainView_->isFollowEnabled();
     }
+
+    void selectMainViewLine( LineNumber::UnderlyingType lineIndex )
+    {
+        crawler->logMainView_->selectAndDisplayLine( LineNumber( lineIndex ) );
+        QTest::qWait( 50 );
+    }
+
+    qsizetype markedLinesCount()
+    {
+        return crawler->logFilteredData_->getMarks().size();
+    }
+
+    bool isMainLineMarked( LineNumber::UnderlyingType line )
+    {
+        return crawler->logFilteredData_->lineTypeByLine( LineNumber( line ) )
+            .testFlag( AbstractLogData::LineTypeFlags::Mark );
+    }
+
+    void addMarksInMainView( const klogg::vector<LineNumber>& lines )
+    {
+        crawler->markLinesFromMain( lines );
+        QTest::qWait( 20 );
+    }
+
+    void deleteMarksInMainView( const klogg::vector<LineNumber>& lines )
+    {
+        crawler->deleteMarkLinesFromMain( lines );
+        QTest::qWait( 20 );
+    }
 };
 
 using CrawlerWidgetVisitor = CrawlerWidget::access_by<CrawlerWidgetPrivate>;
@@ -268,6 +298,102 @@ SCENARIO( "Crawler widget search", "[ui]" )
             THEN( "single line match" )
             {
                 REQUIRE( crawlerVisitor.getLogFilteredNbLines().get() == 1 );
+            }
+        }
+
+        WHEN( "default shortcuts for line mark actions are configured" )
+        {
+            const auto& shortcuts = ShortcutAction::defaultShortcutList();
+
+            THEN( "Add and Delete line mark defaults are M and N with no find-next N conflict" )
+            {
+                const auto addMarkShortcut
+                    = QKeySequence( Qt::Key_M ).toString( QKeySequence::PortableText );
+                const auto deleteMarkShortcut
+                    = QKeySequence( Qt::Key_N ).toString( QKeySequence::PortableText );
+
+                REQUIRE( shortcuts.at( ShortcutAction::LogViewMark )
+                             .keySequence.contains( addMarkShortcut ) );
+                REQUIRE( shortcuts.at( ShortcutAction::LogViewDeleteMark )
+                             .keySequence.contains( deleteMarkShortcut ) );
+                REQUIRE_FALSE( shortcuts.at( ShortcutAction::LogViewQfForward )
+                                   .keySequence.contains( deleteMarkShortcut ) );
+            }
+        }
+
+        WHEN( "line mark actions are used on a single line" )
+        {
+            crawlerVisitor.selectMainViewLine( 10 );
+
+            crawlerVisitor.addMarksInMainView( { 10_lnum } );
+
+            THEN( "line is marked" )
+            {
+                REQUIRE( crawlerVisitor.isMainLineMarked( 10 ) );
+                REQUIRE( crawlerVisitor.markedLinesCount() == 1 );
+            }
+
+            AND_WHEN( "add line mark action is applied again" )
+            {
+                crawlerVisitor.addMarksInMainView( { 10_lnum } );
+
+                THEN( "line stays marked and mark count does not increase" )
+                {
+                    REQUIRE( crawlerVisitor.isMainLineMarked( 10 ) );
+                    REQUIRE( crawlerVisitor.markedLinesCount() == 1 );
+                }
+            }
+
+            AND_WHEN( "delete line mark action is applied" )
+            {
+                crawlerVisitor.deleteMarksInMainView( { 10_lnum } );
+
+                THEN( "line mark is removed" )
+                {
+                    REQUIRE_FALSE( crawlerVisitor.isMainLineMarked( 10 ) );
+                    REQUIRE( crawlerVisitor.markedLinesCount() == 0 );
+                }
+            }
+        }
+
+        WHEN( "line mark actions are used on multiple selected lines" )
+        {
+            crawlerVisitor.selectAllInMainView();
+
+            klogg::vector<LineNumber> selectedLines;
+            selectedLines.reserve( static_cast<size_t>( SL_NB_LINES ) );
+            for ( LineNumber::UnderlyingType i = 0;
+                  i < static_cast<LineNumber::UnderlyingType>( SL_NB_LINES ); ++i ) {
+                selectedLines.push_back( LineNumber( i ) );
+            }
+
+            crawlerVisitor.addMarksInMainView( selectedLines );
+
+            THEN( "all lines are marked" )
+            {
+                REQUIRE( crawlerVisitor.markedLinesCount()
+                         == static_cast<qsizetype>( SL_NB_LINES ) );
+            }
+
+            AND_WHEN( "add line mark action is applied again" )
+            {
+                crawlerVisitor.addMarksInMainView( selectedLines );
+
+                THEN( "all lines remain marked" )
+                {
+                    REQUIRE( crawlerVisitor.markedLinesCount()
+                             == static_cast<qsizetype>( SL_NB_LINES ) );
+                }
+            }
+
+            AND_WHEN( "delete line mark action is applied" )
+            {
+                crawlerVisitor.deleteMarksInMainView( selectedLines );
+
+                THEN( "all marks are removed" )
+                {
+                    REQUIRE( crawlerVisitor.markedLinesCount() == 0 );
+                }
             }
         }
 

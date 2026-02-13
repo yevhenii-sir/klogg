@@ -1,0 +1,93 @@
+/*
+ * Copyright (C) 2026
+ *
+ * This file is part of klogg.
+ *
+ * klogg is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * klogg is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with klogg.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include <catch2/catch.hpp>
+
+#include <QSettings>
+#include <QSignalSpy>
+#include <QTemporaryDir>
+
+#include "tabgroup.h"
+
+TEST_CASE( "TabGroupManager removes an empty group when the last tab is removed" )
+{
+    TabGroupManager manager;
+    QSignalSpy changedSpy( &manager, &TabGroupManager::groupsChanged );
+
+    manager.createGroup( "Errors", QColor( "#FF3344" ) );
+    REQUIRE( manager.groups().size() == 1 );
+
+    const auto groupId = manager.groups().front().id;
+    manager.addTabToGroup( groupId, "/tmp/a.log" );
+    REQUIRE( manager.groupIdForTab( "/tmp/a.log" ) == groupId );
+
+    manager.removeTabFromGroup( "/tmp/a.log" );
+
+    REQUIRE( manager.groupIdForTab( "/tmp/a.log" ).isEmpty() );
+    REQUIRE( manager.groups().isEmpty() );
+    REQUIRE( changedSpy.count() >= 3 );
+}
+
+TEST_CASE( "TabGroupManager moveTabToGroup with empty target removes group membership" )
+{
+    TabGroupManager manager;
+    manager.createGroup( "Debug", QColor( "#4488FF" ) );
+
+    const auto groupId = manager.groups().front().id;
+    manager.addTabToGroup( groupId, "/tmp/debug.log" );
+    REQUIRE( manager.groupIdForTab( "/tmp/debug.log" ) == groupId );
+
+    manager.moveTabToGroup( "/tmp/debug.log", QString{} );
+
+    REQUIRE( manager.groupIdForTab( "/tmp/debug.log" ).isEmpty() );
+    REQUIRE( manager.groups().isEmpty() );
+}
+
+TEST_CASE( "TabGroupManager persists and restores groups with tabs and collapsed state" )
+{
+    QTemporaryDir temporaryDir;
+    REQUIRE( temporaryDir.isValid() );
+
+    const auto settingsPath = temporaryDir.filePath( "tabgroup.ini" );
+
+    {
+        QSettings settings( settingsPath, QSettings::IniFormat );
+        TabGroupManager manager;
+        manager.createGroup( "Backend", QColor( "#00AA66" ) );
+        const auto groupId = manager.groups().front().id;
+        manager.addTabToGroup( groupId, "/tmp/backend-1.log" );
+        manager.addTabToGroup( groupId, "/tmp/backend-2.log" );
+        manager.toggleCollapsed( groupId );
+
+        manager.saveToStorage( settings );
+        settings.sync();
+    }
+
+    QSettings restoredSettings( settingsPath, QSettings::IniFormat );
+    TabGroupManager restoredManager;
+    restoredManager.retrieveFromStorage( restoredSettings );
+
+    REQUIRE( restoredManager.groups().size() == 1 );
+    const auto restoredGroup = restoredManager.groups().front();
+    REQUIRE( restoredGroup.name == "Backend" );
+    REQUIRE( restoredGroup.color == QColor( "#00AA66" ) );
+    REQUIRE( restoredGroup.collapsed );
+    REQUIRE( restoredGroup.tabPaths.contains( "/tmp/backend-1.log" ) );
+    REQUIRE( restoredGroup.tabPaths.contains( "/tmp/backend-2.log" ) );
+}

@@ -76,6 +76,8 @@ OperationQueue::OperationQueue( std::function<void()> beforeOperationStart )
 
 void OperationQueue::setWorker( std::unique_ptr<LogDataWorker>&& worker )
 {
+    ScopedLock guard( mutex_ );
+    shuttingDown_ = false;
     worker_ = std::move( worker );
 }
 
@@ -92,6 +94,9 @@ void OperationQueue::shutdown()
     std::unique_ptr<LogDataWorker> worker;
     {
         ScopedLock guard( mutex_ );
+        shuttingDown_ = true;
+        pendingOperation_ = {};
+        executingOperation_ = {};
         worker = std::move( worker_ );
     }
 
@@ -104,6 +109,13 @@ void OperationQueue::shutdown()
 
 void OperationQueue::tryStartPendingOperation()
 {
+    if ( shuttingDown_ ) {
+        LOG_INFO << "Skip starting operation: queue is shutting down";
+        pendingOperation_ = {};
+        executingOperation_ = {};
+        return;
+    }
+
     executingOperation_ = std::exchange( pendingOperation_, {} );
     if ( !worker_ ) {
         LOG_WARNING << "No worker for operation";
@@ -124,6 +136,11 @@ void OperationQueue::tryStartPendingOperation()
 void OperationQueue::enqueueOperation( OperationVariant&& operation )
 {
     ScopedLock guard( mutex_ );
+
+    if ( shuttingDown_ ) {
+        LOG_INFO << "Skip enqueue operation during shutdown";
+        return;
+    }
 
     LOG_INFO << "Enqueue operation " << operation.index() << ", now executing "
              << executingOperation_.index();

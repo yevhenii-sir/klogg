@@ -218,6 +218,7 @@ class MainWindow : public QMainWindow {
     void removeFromRecent( const QString& pathToRemove );
     void tryOpenClipboard( int tryTimes );
     void updateShortcuts();
+    void persistSessionState();
 
     WindowSession session_;
     QString loadingFileName;
@@ -319,6 +320,8 @@ class MainWindow : public QMainWindow {
 
     bool isMaximized_ = false;
     bool isCloseFromTray_ = false;
+    bool suspendSessionPersistence_ = false;
+    bool shutdownInProgress_ = false;
 
     std::once_flag screenChangesConnect_;
 };

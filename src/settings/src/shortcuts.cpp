@@ -391,6 +391,13 @@ const ShortcutAction::ShortcutList& ShortcutAction::defaultShortcutList()
             },
         },
         {
+            LogViewDeleteMark,
+            {
+                QApplication::tr( "Delete line mark" ),
+                QStringList{ QKeySequence( Qt::Key_N ).toString() },
+            },
+        },
+        {
             LogViewNextMark,
             {
                 QApplication::tr( "Jump to next mark" ),
@@ -496,8 +503,7 @@ const ShortcutAction::ShortcutList& ShortcutAction::defaultShortcutList()
             LogViewQfForward,
             {
                 QApplication::tr( "Main view: find next" ),
-                getKeyBindings( QKeySequence::FindNext )
-                    << QKeySequence( Qt::Key_N ).toString() << "Ctrl+G",
+                getKeyBindings( QKeySequence::FindNext ) << "Ctrl+G",
             },
         },
         {

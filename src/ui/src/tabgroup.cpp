@@ -125,8 +125,12 @@ void TabGroupManager::addTabToGroup( const QString& groupId, const QString& tabP
 
 void TabGroupManager::removeTabFromGroup( const QString& tabPath )
 {
-    for ( auto& group : groups_ ) {
+    for ( int i = 0; i < groups_.size(); ++i ) {
+        auto& group = groups_[ i ];
         if ( group.tabPaths.removeAll( tabPath ) > 0 ) {
+            if ( group.tabPaths.isEmpty() ) {
+                groups_.removeAt( i );
+            }
             Q_EMIT groupsChanged();
             return;
         }
@@ -166,7 +170,7 @@ void TabGroupManager::retrieveFromStorage( QSettings& settings )
         group.collapsed = settings.value( "collapsed", false ).toBool();
         group.tabPaths = settings.value( "tabPaths" ).toStringList();
 
-        if ( !group.id.isEmpty() && !group.name.isEmpty() ) {
+        if ( !group.id.isEmpty() && !group.name.isEmpty() && !group.tabPaths.isEmpty() ) {
             groups_.append( group );
         }
     }
@@ -188,4 +192,5 @@ void TabGroupManager::saveToStorage( QSettings& settings ) const
         settings.setValue( "tabPaths", group.tabPaths );
     }
     settings.endArray();
+    settings.sync();
 }

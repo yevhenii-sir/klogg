@@ -1,0 +1,492 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 1db128ba..969206a0 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -137,7 +137,7 @@ include (${CMAKE_MODULE_PATH}/archdetect.cmake)
+ 
+ include (${CMAKE_MODULE_PATH}/sanitize.cmake)
+ 
+-if (NOT FAT_RUNTIME)
++if (NOT FAT_RUNTIME AND NOT MSVC)
+     if (GNUCC_TUNE)
+         set(ARCH_C_FLAGS "-${ARCH_FLAG}=${GNUCC_ARCH} -${TUNE_FLAG}=${GNUCC_TUNE}")
+         set(ARCH_CXX_FLAGS "-${ARCH_FLAG}=${GNUCC_ARCH} -${TUNE_FLAG}=${GNUCC_TUNE}")
+@@ -191,7 +191,11 @@ if (CORRECT_PCRE_VERSION AND PCRE_BUILD_SOURCE AND BUILD_STATIC_LIBS)
+     set(BUILD_CHIMERA TRUE)
+ endif()
+ 
+-set(RAGEL_C_FLAGS "-Wno-unused -funsigned-char")
++if (MSVC)
++    set(RAGEL_C_FLAGS "/w")
++else()
++    set(RAGEL_C_FLAGS "-Wno-unused -funsigned-char")
++endif()
+ 
+ set_source_files_properties(
+     src/parser/Parser.cpp
+@@ -918,8 +922,13 @@ else ()
+         if (NOT BUILD_AVX512VBMI)
+             set (DISPATCHER_DEFINE "${DISPATCHER_DEFINE} -DDISABLE_AVX512VBMI_DISPATCH")
+         endif (NOT BUILD_AVX512VBMI)
+-        set_source_files_properties(src/dispatcher.c PROPERTIES
+-            COMPILE_FLAGS "-Wno-unused-parameter -Wno-unused-function ${DISPATCHER_DEFINE}")
++        if (MSVC)
++            set_source_files_properties(src/dispatcher.c PROPERTIES
++                COMPILE_FLAGS "/w ${DISPATCHER_DEFINE}")
++        else()
++            set_source_files_properties(src/dispatcher.c PROPERTIES
++                COMPILE_FLAGS "-Wno-unused-parameter -Wno-unused-function ${DISPATCHER_DEFINE}")
++        endif()
+ 
+         if (BUILD_STATIC_LIBS)
+             add_library(hs_exec_core2 OBJECT ${hs_exec_SRCS})
+diff --git a/cmake/cflags-generic.cmake b/cmake/cflags-generic.cmake
+index 4eabcdb5..018ad872 100644
+--- a/cmake/cflags-generic.cmake
++++ b/cmake/cflags-generic.cmake
+@@ -43,6 +43,14 @@ if (NOT(ARCH_IA32 AND RELEASE_BUILD))
+     set(EXTRA_CXX_FLAGS "${EXTRA_CXX_FLAGS} -fno-omit-frame-pointer")
+ endif()
+ 
++if (MSVC)
++    # Generic vectorscan flags are GCC/Clang-oriented. Use MSVC defaults.
++    # /Zc:preprocessor enables the conformant preprocessor required for
++    # correct handling of commas inside nested macro parentheses.
++    set(EXTRA_C_FLAGS "/Zc:preprocessor")
++    set(EXTRA_CXX_FLAGS "/Zc:preprocessor")
++endif()
++
+ CHECK_INCLUDE_FILES(unistd.h HAVE_UNISTD_H)
+ CHECK_FUNCTION_EXISTS(posix_memalign HAVE_POSIX_MEMALIGN)
+ CHECK_FUNCTION_EXISTS(_aligned_malloc HAVE__ALIGNED_MALLOC)
+diff --git a/cmake/cflags-x86.cmake b/cmake/cflags-x86.cmake
+index 7b9cbf81..79600d65 100644
+--- a/cmake/cflags-x86.cmake
++++ b/cmake/cflags-x86.cmake
+@@ -4,6 +4,12 @@ option(BUILD_AVX512VBMI "Enabling support for AVX512VBMI" OFF)
+ set(SKYLAKE_FLAG "-march=skylake-avx512")
+ set(ICELAKE_FLAG "-march=icelake-server")
+ 
++if (MSVC)
++    # MSVC does not support -march variants; /arch:AVX2 is the closest supported flag.
++    set(SKYLAKE_FLAG "/arch:AVX2")
++    set(ICELAKE_FLAG "/arch:AVX2")
++endif()
++
+ if (NOT FAT_RUNTIME)
+     if (BUILD_AVX512VBMI)
+         message (STATUS "AVX512VBMI implies AVX512, enabling BUILD_AVX512")
+@@ -19,15 +25,30 @@ if (NOT FAT_RUNTIME)
+     endif ()
+     if (BUILD_AVX2)
+         message (STATUS "Enabling BUILD_AVX2")
+-        set(ARCH_C_FLAGS "-mavx2")
+-        set(ARCH_CXX_FLAGS "-mavx2")
++        if (MSVC)
++            set(ARCH_C_FLAGS "/arch:AVX2")
++            set(ARCH_CXX_FLAGS "/arch:AVX2")
++        else()
++            set(ARCH_C_FLAGS "-mavx2")
++            set(ARCH_CXX_FLAGS "-mavx2")
++        endif()
++    else()
++        if (MSVC)
++            set(ARCH_C_FLAGS "")
++            set(ARCH_CXX_FLAGS "")
++        else()
++            set(ARCH_C_FLAGS "-msse4.2")
++            set(ARCH_CXX_FLAGS "-msse4.2")
++        endif()
++    endif()
++else()
++    if (MSVC)
++        set(ARCH_C_FLAGS "")
++        set(ARCH_CXX_FLAGS "")
+     else()
+         set(ARCH_C_FLAGS "-msse4.2")
+         set(ARCH_CXX_FLAGS "-msse4.2")
+     endif()
+-else()
+-    set(ARCH_C_FLAGS "-msse4.2")
+-    set(ARCH_CXX_FLAGS "-msse4.2")
+ endif()
+ 
+ set(CMAKE_REQUIRED_FLAGS "${ARCH_C_FLAGS}")
+@@ -66,7 +87,11 @@ int main() {
+ }" HAVE_SSE42)
+ 
+ # now look for AVX2
+-set(CMAKE_REQUIRED_FLAGS "-mavx2")
++if (MSVC)
++    set(CMAKE_REQUIRED_FLAGS "/arch:AVX2")
++else()
++    set(CMAKE_REQUIRED_FLAGS "-mavx2")
++endif()
+ CHECK_C_SOURCE_COMPILES("#include <${INTRIN_INC_H}>
+ #if !defined(__AVX2__)
+ #error no avx2
+@@ -129,5 +154,3 @@ else (NOT FAT_RUNTIME)
+         message(FATAL_ERROR "A minimum of SSE4.2 compiler support is required")
+     endif ()
+ endif ()
+-
+-
+diff --git a/src/nfa/nfa_internal.h b/src/nfa/nfa_internal.h
+index 8cc701b6..604358b4 100644
+--- a/src/nfa/nfa_internal.h
++++ b/src/nfa/nfa_internal.h
+@@ -244,6 +244,11 @@ int isMultiTopType(u8 t) {
+  * engine. */
+ 
+ /* Use for functions that return an integer. */
++#if defined(_MSC_VER) && !defined(__clang__)
++/* MSVC does not support GCC statement expressions ({...}); use comma operator */
++#define NFA_API_NO_IMPL(...)         (assert(!"not implemented for this engine!"), 0)
++#define NFA_API_ZOMBIE_NO_IMPL(...)  (assert(!"not implemented for this engine!"), NFA_ZOMBIE_NO)
++#else
+ #define NFA_API_NO_IMPL(...)                                                   \
+     ({                                                                         \
+         assert(!"not implemented for this engine!");                           \
+@@ -256,6 +261,7 @@ int isMultiTopType(u8 t) {
+         assert(!"not implemented for this engine!");                           \
+         NFA_ZOMBIE_NO;                                                         \
+     })
++#endif
+ 
+ 
+ #ifdef __cplusplus
+diff --git a/src/rose/program_runtime.c b/src/rose/program_runtime.c
+index 87dc0c4d..a6a5ed82 100644
+--- a/src/rose/program_runtime.c
++++ b/src/rose/program_runtime.c
+@@ -2116,6 +2116,24 @@ hwlmcb_rv_t checkPurelyNegatives(const struct RoseEngine *t,
+     return HWLM_CONTINUE_MATCHING;
+ }
+ 
++#if defined(_MSC_VER) && !defined(__clang__)
++/* MSVC does not support GCC computed gotos (&&label / goto *ptr).
++ * Use a plain switch-continue loop instead. */
++#define PROGRAM_CASE(name)                                                     \
++    case ROSE_INSTR_##name: {                                                  \
++        DEBUG_PRINTF("instruction: " #name " (pc=%u)\n",                       \
++                     programOffset + (u32)(pc - pc_base));                     \
++        const struct ROSE_STRUCT_##name *ri =                                  \
++            (const struct ROSE_STRUCT_##name *)pc;
++
++#define PROGRAM_NEXT_INSTRUCTION                                               \
++    pc += ROUNDUP_N(sizeof(*ri), ROSE_INSTR_MIN_ALIGN);                        \
++    continue;                                                                  \
++    }
++
++#define PROGRAM_NEXT_INSTRUCTION_JUMP                                          \
++    continue;
++#else
+ #define PROGRAM_CASE(name)                                                     \
+     case ROSE_INSTR_##name: {                                                  \
+     LABEL_ROSE_INSTR_##name:                                                   \
+@@ -2131,6 +2149,7 @@ hwlmcb_rv_t checkPurelyNegatives(const struct RoseEngine *t,
+ 
+ #define PROGRAM_NEXT_INSTRUCTION_JUMP                                          \
+     goto *(next_instr[*(const u8 *)pc]);
++#endif
+ 
+ hwlmcb_rv_t roseRunProgram(const struct RoseEngine *t,
+                            struct hs_scratch *scratch, u32 programOffset,
+@@ -2162,6 +2181,7 @@ hwlmcb_rv_t roseRunProgram(const struct RoseEngine *t,
+ 
+     assert(*(const u8 *)pc != ROSE_INSTR_END);
+ 
++#if !defined(_MSC_VER) || defined(__clang__)
+     static const void *next_instr[] = {
+         &&LABEL_ROSE_INSTR_END,               //!< End of program.
+         &&LABEL_ROSE_INSTR_ANCHORED_DELAY,    //!< Delay until after anchored matcher.
+@@ -2237,6 +2257,7 @@ hwlmcb_rv_t roseRunProgram(const struct RoseEngine *t,
+         &&LABEL_ROSE_INSTR_CHECK_MASK_64     //!< 64-bytes and/cmp/neg mask check.
+ #endif
+     };
++#endif /* !_MSC_VER */
+ 
+     for (;;) {
+         assert(ISALIGNED_N(pc, ROSE_INSTR_MIN_ALIGN));
+diff --git a/src/ue2common.h b/src/ue2common.h
+index b8300dc7..d9fc1db1 100644
+--- a/src/ue2common.h
++++ b/src/ue2common.h
+@@ -36,6 +36,37 @@
+ #ifndef UE2COMMON_H
+ #define UE2COMMON_H
+ 
++#if defined(_MSC_VER) && !defined(__clang__)
++#ifndef __attribute__
++#define __attribute__(x)
++#endif
++
++#ifndef __builtin_expect
++#define __builtin_expect(x, y) (x)
++#endif
++
++#ifndef __builtin_unreachable
++#define __builtin_unreachable() __assume(0)
++#endif
++
++/* C++ mode: decltype is available; C mode: fall back to void* casts via !HAVE_TYPEOF */
++#ifdef __cplusplus
++#define __typeof__(x) decltype(x)
++#define __typeof(x) decltype(x)
++#endif
++
++#include <intrin.h>
++#include <xmmintrin.h>
++#define __builtin_prefetch(addr, ...) _mm_prefetch((const char *)(addr), _MM_HINT_T0)
++
++/* Map GCC __builtin_popcount to MSVC intrinsics */
++#define __builtin_popcount(x)   ((int)__popcnt(x))
++#define __builtin_popcountll(x) ((int)__popcnt64(x))
++
++/* Disable GCC inline assembly; MSVC does not support __asm__ syntax */
++#define NO_ASM 1
++#endif
++
+ #include "config.h"
+ 
+ /* standard types used across ue2 */
+@@ -92,8 +123,18 @@ typedef u32 ReportID;
+ /** no, seriously, inline it, even if building in debug mode */
+ #define really_really_inline inline __attribute__ ((always_inline, unused))
+ #define never_inline __attribute__ ((noinline))
+-#define alignof __alignof
++#if !defined(__cplusplus)
++/* C mode: all compilers need alignof mapped to __alignof */
++#  if defined(_MSC_VER)
++#    define alignof(x) __alignof(x)
++#  else
++#    define alignof __alignof
++#  endif
++#endif
++/* C++ mode: alignof is a C++11 keyword, no macro needed */
++#if !defined(_MSC_VER) || defined(__cplusplus)
+ #define HAVE_TYPEOF 1
++#endif
+ 
+ 
+ // We use C99-style "restrict".
+diff --git a/src/util/arch/common/bitutils.h b/src/util/arch/common/bitutils.h
+index e5ff5bc1..1080a015 100644
+--- a/src/util/arch/common/bitutils.h
++++ b/src/util/arch/common/bitutils.h
+@@ -38,6 +38,17 @@
+ #include "util/unaligned.h"
+ #include "util/simd_utils.h"
+ 
++/* MSVC does not provide GCC __builtin_* intrinsics; map to MSVC equivalents */
++#if defined(_MSC_VER) && !defined(__clang__)
++#include <intrin.h>
++#define __builtin_clz(x)       ((int)_lzcnt_u32(x))
++#define __builtin_clzll(x)     ((int)_lzcnt_u64(x))
++#define __builtin_ctz(x)       ((int)_tzcnt_u32(x))
++#define __builtin_ctzll(x)     ((int)_tzcnt_u64(x))
++#define __builtin_popcountl(x) ((int)__popcnt64(x))
++#define __builtin_clzl(x)      ((int)_lzcnt_u64(x))
++#endif
++
+ static really_inline
+ u32 clz32_impl_c(u32 x) {
+     return (u32)__builtin_clz(x);
+diff --git a/src/util/arch/common/cpuid_flags.h b/src/util/arch/common/cpuid_flags.h
+index c1bbdc66..dbeabf65 100644
+--- a/src/util/arch/common/cpuid_flags.h
++++ b/src/util/arch/common/cpuid_flags.h
+@@ -33,7 +33,11 @@
+ #include "ue2common.h"
+ 
+ #if (defined(ARCH_IA32) || defined(ARCH_X86_64)) && !defined(CPUID_H_)
++#if defined(_MSC_VER)
++#include <intrin.h>
++#else
+ #include <cpuid.h>
++#endif
+  /* system header doesn't have a header guard */
+ #define CPUID_H_
+ #endif
+diff --git a/src/util/arch/x86/bitutils.h b/src/util/arch/x86/bitutils.h
+index 5c15ee91..bc40d727 100644
+--- a/src/util/arch/x86/bitutils.h
++++ b/src/util/arch/x86/bitutils.h
+@@ -103,7 +103,7 @@ u32 findAndClearLSB_64_impl(u64a *v) {
+ #else
+     // generic variant using gcc's builtin on 64-bit
+     u64a val = *v, offset;
+-    offset = ctz64(val);
++    offset = ctz64_impl_c(val);
+     *v = val & (val - 1);
+ #endif // ARCH_X86_64
+     assert(offset < 64);
+@@ -247,7 +247,7 @@ char bf64_set_impl(u64a *bitfield, u32 i) {
+ 
+ static really_inline
+ void bf64_unset_impl(u64a *bitfield, u32 i) {
+-    return bf64_unset_impl_c(bitfield, i);
++    bf64_unset_impl_c(bitfield, i);
+ }
+ 
+ static really_inline
+diff --git a/src/util/arch/x86/cpuid_flags.c b/src/util/arch/x86/cpuid_flags.c
+index 92c297b8..08598165 100644
+--- a/src/util/arch/x86/cpuid_flags.c
++++ b/src/util/arch/x86/cpuid_flags.c
+@@ -35,8 +35,12 @@
+ #include "util/arch.h"
+ 
+ #if !defined(CPUID_H_)
++#if defined(_MSC_VER)
++#include <intrin.h>
++#else
+ #include <cpuid.h>
+ #endif
++#endif
+ 
+ u64a cpuid_flags(void) {
+     u64a cap = 0;
+diff --git a/src/util/arch/x86/cpuid_inline.h b/src/util/arch/x86/cpuid_inline.h
+index d5ff210c..439f59db 100644
+--- a/src/util/arch/x86/cpuid_inline.h
++++ b/src/util/arch/x86/cpuid_inline.h
+@@ -34,7 +34,11 @@
+ #include "util/arch/common/cpuid_flags.h"
+ 
+ #if !defined(CPUID_H_)
++#if defined(_MSC_VER)
++#include <intrin.h>
++#else
+ #include <cpuid.h>
++#endif
+ /* system header doesn't have a header guard */
+ #define CPUID_H_
+ #endif
+@@ -47,7 +51,16 @@ extern "C"
+ static inline
+ void cpuid(unsigned int op, unsigned int leaf, unsigned int *eax,
+            unsigned int *ebx, unsigned int *ecx, unsigned int *edx) {
++#if defined(_MSC_VER)
++    int regs[4];
++    __cpuidex(regs, (int)op, (int)leaf);
++    *eax = (unsigned int)regs[0];
++    *ebx = (unsigned int)regs[1];
++    *ecx = (unsigned int)regs[2];
++    *edx = (unsigned int)regs[3];
++#else
+     __cpuid_count(op, leaf, *eax, *ebx, *ecx, *edx);
++#endif
+ }
+ 
+ // ECX
+@@ -87,6 +100,9 @@ void cpuid(unsigned int op, unsigned int leaf, unsigned int *eax,
+ 
+ static inline
+ u64a xgetbv(u32 op) {
++#if defined(_MSC_VER)
++    return _xgetbv(op);
++#else
+     u32 a, d;
+     __asm__ volatile (
+             "xgetbv\n"
+@@ -94,6 +110,7 @@ u64a xgetbv(u32 op) {
+               "=d"(d)
+             : "c"(op));
+     return ((u64a)d << 32) + a;
++#endif
+ }
+ 
+ static inline
+diff --git a/src/util/arch/x86/simd_utils.h b/src/util/arch/x86/simd_utils.h
+index ba2bf26f..240dc4cf 100644
+--- a/src/util/arch/x86/simd_utils.h
++++ b/src/util/arch/x86/simd_utils.h
+@@ -42,6 +42,12 @@
+ 
+ #include <string.h> // for memcpy
+ 
++#if defined(_MSC_VER)
++#define CAST_M128(x) (x)
++#else
++#define CAST_M128(x) (m128)(x)
++#endif
++
+ #define ZEROES_8 0, 0, 0, 0, 0, 0, 0, 0
+ #define ZEROES_31 ZEROES_8, ZEROES_8, ZEROES_8, 0, 0, 0, 0, 0, 0, 0
+ #define ZEROES_32 ZEROES_8, ZEROES_8, ZEROES_8, ZEROES_8
+@@ -72,12 +78,12 @@ static really_inline m128 ones128(void) {
+ }
+ 
+ static really_inline m128 zeroes128(void) {
+-    return (m128) _mm_setzero_si128();
++    return CAST_M128(_mm_setzero_si128());
+ }
+ 
+ /** \brief Bitwise not for m128*/
+ static really_inline m128 not128(m128 a) {
+-    return (m128) _mm_xor_si128(a, ones128());
++    return CAST_M128(_mm_xor_si128(a, ones128()));
+ }
+ 
+ /** \brief Return 1 if a and b are different otherwise 0 */
+@@ -165,7 +171,7 @@ m128 load_m128_from_u64a(const u64a *p) {
+     return _mm_set_epi64x(0LL, *p);
+ }
+ 
+-#define CASE_RSHIFT_VECTOR(a, count)  case count: return _mm_srli_si128((m128)(a), (count)); break;
++#define CASE_RSHIFT_VECTOR(a, count)  case count: return _mm_srli_si128(CAST_M128(a), (count)); break;
+ 
+ static really_inline
+ m128 rshiftbyte_m128(const m128 a, int count_immed) {
+@@ -196,7 +202,7 @@ m128 rshiftbyte_m128(const m128 a, int count_immed) {
+ }
+ #undef CASE_RSHIFT_VECTOR
+ 
+-#define CASE_LSHIFT_VECTOR(a, count)  case count: return _mm_slli_si128((m128)(a), (count)); break;
++#define CASE_LSHIFT_VECTOR(a, count)  case count: return _mm_slli_si128(CAST_M128(a), (count)); break;
+ 
+ static really_inline
+ m128 lshiftbyte_m128(const m128 a, int count_immed) {
+@@ -354,7 +360,7 @@ m128 pshufb_m128(m128 a, m128 b) {
+     return _mm_shuffle_epi8(a, b);
+ }
+ 
+-#define CASE_ALIGN_VECTORS(a, b, offset)  case offset: return palignr_imm((m128)(a), (m128)(b), (offset)); break;
++#define CASE_ALIGN_VECTORS(a, b, offset)  case offset: return palignr_imm(CAST_M128(a), CAST_M128(b), (offset)); break;
+ 
+ static really_really_inline
+ m128 palignr_sw(m128 r, m128 l, int offset) {
+diff --git a/src/util/popcount.h b/src/util/popcount.h
+index d90a0d50..36f0ac35 100644
+--- a/src/util/popcount.h
++++ b/src/util/popcount.h
+@@ -37,9 +37,18 @@
+ #include "ue2common.h"
+ #include "util/arch.h"
+ 
++#if defined(_MSC_VER)
++#include <intrin.h>
++#define hs_popcount32(x)  __popcnt(x)
++#define hs_popcount64(x)  __popcnt64(x)
++#else
++#define hs_popcount32(x)  __builtin_popcount(x)
++#define hs_popcount64(x)  __builtin_popcountll(x)
++#endif
++
+ static really_inline
+ u32 popcount32(u32 x) {
+-    return __builtin_popcount(x);
++    return hs_popcount32(x);
+ // #if defined(HAVE_POPCOUNT_INSTR)
+ //     // Single-instruction builtin.
+ //     return _mm_popcnt_u32(x);
+@@ -63,7 +72,7 @@ u32 popcount32x4(u32 const *x) {
+ 
+ static really_inline
+ u32 popcount64(u64a x) {
+-    return __builtin_popcountll(x);
++    return hs_popcount64(x);
+ // #if defined(ARCH_X86_64)
+ // # if defined(HAVE_POPCOUNT_INSTR)
+ //     // Single-instruction builtin.

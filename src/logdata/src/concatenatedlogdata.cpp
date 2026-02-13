@@ -28,20 +28,42 @@ ConcatenatedLogData::ConcatenatedLogData()
 {
 }
 
+ConcatenatedLogData::~ConcatenatedLogData()
+{
+    for ( auto& info : sources_ ) {
+        QObject::disconnect( info.loadingFinishedConnection );
+        QObject::disconnect( info.fileChangedConnection );
+    }
+    sources_.clear();
+    totalLines_ = 0_lcount;
+    maxLength_ = 0_length;
+}
+
 void ConcatenatedLogData::addSource( std::shared_ptr<LogData> source )
 {
-    sources_.push_back( { source, 0_lcount } );
+    if ( !source ) {
+        LOG_WARNING << "Ignoring null source in ConcatenatedLogData::addSource";
+        return;
+    }
 
-    // Connect to source signals for live updates
-    connect( source.get(), &LogData::loadingFinished, this, [ this ]( LoadingStatus status ) {
-        rebuildIndex();
-        Q_EMIT loadingFinished( status );
-    } );
-    connect( source.get(), &LogData::fileChanged, this, [ this ]( MonitoredFileStatus status ) {
-        rebuildIndex();
-        Q_EMIT fileChanged( status );
-    } );
+    SourceInfo sourceInfo;
+    sourceInfo.logData = std::move( source );
 
+    // Connect to source signals for live updates.
+    sourceInfo.loadingFinishedConnection
+        = connect( sourceInfo.logData.get(), &LogData::loadingFinished, this,
+                   [ this ]( LoadingStatus status ) {
+                       rebuildIndex();
+                       Q_EMIT loadingFinished( status );
+                   } );
+    sourceInfo.fileChangedConnection
+        = connect( sourceInfo.logData.get(), &LogData::fileChanged, this,
+                   [ this ]( MonitoredFileStatus status ) {
+                       rebuildIndex();
+                       Q_EMIT fileChanged( status );
+                   } );
+
+    sources_.push_back( std::move( sourceInfo ) );
     rebuildIndex();
 }
 
@@ -51,6 +73,11 @@ void ConcatenatedLogData::rebuildIndex()
     maxLength_ = 0_length;
 
     for ( auto& info : sources_ ) {
+        if ( !info.logData ) {
+            info.cumulativeLines = totalLines_;
+            continue;
+        }
+
         totalLines_ += info.logData->getNbLine();
         info.cumulativeLines = totalLines_;
         maxLength_ = qMax( maxLength_, info.logData->getMaxLength() );
@@ -83,19 +110,33 @@ std::pair<int, LineNumber> ConcatenatedLogData::mapToSource( LineNumber globalLi
 
 std::shared_ptr<LogData> ConcatenatedLogData::sourceAt( int index ) const
 {
-    return sources_.at( static_cast<size_t>( index ) ).logData;
+    if ( index < 0 || static_cast<size_t>( index ) >= sources_.size() ) {
+        return {};
+    }
+
+    return sources_[ static_cast<size_t>( index ) ].logData;
 }
 
 QString ConcatenatedLogData::doGetLineString( LineNumber line ) const
 {
+    if ( sources_.empty() || line.get() >= totalLines_.get() ) {
+        return {};
+    }
+
     const auto [ srcIdx, localLine ] = mapToSource( line );
-    return sources_[ static_cast<size_t>( srcIdx ) ].logData->getLineString( localLine );
+    const auto source = sourceAt( srcIdx );
+    return source ? source->getLineString( localLine ) : QString{};
 }
 
 QString ConcatenatedLogData::doGetExpandedLineString( LineNumber line ) const
 {
+    if ( sources_.empty() || line.get() >= totalLines_.get() ) {
+        return {};
+    }
+
     const auto [ srcIdx, localLine ] = mapToSource( line );
-    return sources_[ static_cast<size_t>( srcIdx ) ].logData->getExpandedLineString( localLine );
+    const auto source = sourceAt( srcIdx );
+    return source ? source->getExpandedLineString( localLine ) : QString{};
 }
 
 klogg::vector<QString> ConcatenatedLogData::doGetLines( LineNumber first, LinesCount number ) const
@@ -138,35 +179,49 @@ LineLength ConcatenatedLogData::doGetMaxLength() const
 
 LineLength ConcatenatedLogData::doGetLineLength( LineNumber line ) const
 {
+    if ( sources_.empty() || line.get() >= totalLines_.get() ) {
+        return 0_length;
+    }
+
     const auto [ srcIdx, localLine ] = mapToSource( line );
-    return sources_[ static_cast<size_t>( srcIdx ) ].logData->getLineLength( localLine );
+    const auto source = sourceAt( srcIdx );
+    return source ? source->getLineLength( localLine ) : 0_length;
 }
 
 void ConcatenatedLogData::doSetDisplayEncoding( const char* encoding )
 {
     for ( auto& info : sources_ ) {
-        info.logData->setDisplayEncoding( encoding );
+        if ( info.logData ) {
+            info.logData->setDisplayEncoding( encoding );
+        }
     }
 }
 
 QTextCodec* ConcatenatedLogData::doGetDisplayEncoding() const
 {
-    if ( !sources_.empty() ) {
-        return sources_.front().logData->getDisplayEncoding();
+    for ( const auto& info : sources_ ) {
+        if ( info.logData ) {
+            return info.logData->getDisplayEncoding();
+        }
     }
+
     return nullptr;
 }
 
 void ConcatenatedLogData::doAttachReader() const
 {
     for ( const auto& info : sources_ ) {
-        info.logData->attachReader();
+        if ( info.logData ) {
+            info.logData->attachReader();
+        }
     }
 }
 
 void ConcatenatedLogData::doDetachReader() const
 {
     for ( const auto& info : sources_ ) {
-        info.logData->detachReader();
+        if ( info.logData ) {
+            info.logData->detachReader();
+        }
     }
 }

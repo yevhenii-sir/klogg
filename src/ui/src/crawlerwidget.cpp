@@ -649,10 +649,6 @@ void CrawlerWidget::updateLineNumberHandler( LineNumber line, LinesCount nLines,
 
 void CrawlerWidget::markLinesFromMain( const klogg::vector<LineNumber>& lines )
 {
-    klogg::vector<LineNumber> alreadyMarkedLines;
-    alreadyMarkedLines.reserve( lines.size() );
-
-    bool markAdded = false;
     for ( const auto& line : lines ) {
         if ( line >= logData_->getNbLine() ) {
             continue;
@@ -661,16 +657,6 @@ void CrawlerWidget::markLinesFromMain( const klogg::vector<LineNumber>& lines )
         if ( !logFilteredData_->lineTypeByLine( line ).testFlag(
                  AbstractLogData::LineTypeFlags::Mark ) ) {
             logFilteredData_->addMark( line );
-            markAdded = true;
-        }
-        else {
-            alreadyMarkedLines.push_back( line );
-        }
-    }
-
-    if ( !markAdded ) {
-        for ( const auto& line : alreadyMarkedLines ) {
-            logFilteredData_->toggleMark( line );
         }
     }
 
@@ -699,6 +685,46 @@ void CrawlerWidget::markLinesFromFiltered( const klogg::vector<LineNumber>& line
                     } );
 
     markLinesFromMain( linesInMain );
+}
+
+void CrawlerWidget::deleteMarkLinesFromMain( const klogg::vector<LineNumber>& lines )
+{
+    for ( const auto& line : lines ) {
+        if ( line >= logData_->getNbLine() ) {
+            continue;
+        }
+
+        if ( logFilteredData_->lineTypeByLine( line ).testFlag(
+                 AbstractLogData::LineTypeFlags::Mark ) ) {
+            logFilteredData_->deleteMark( line );
+        }
+    }
+
+    // Recompute the content of both window.
+    filteredView_->updateData();
+    logMainView_->updateData();
+
+    // Update the match overview
+    overview_.updateData( logData_->getNbLine() );
+
+    // Also update the top window for the coloured bullets.
+    update();
+}
+
+void CrawlerWidget::deleteMarkLinesFromFiltered( const klogg::vector<LineNumber>& lines )
+{
+    klogg::vector<LineNumber> linesInMain( lines.size() );
+    std::transform( lines.cbegin(), lines.cend(), linesInMain.begin(),
+                    [ this ]( const auto& filteredLine ) {
+                        if ( filteredLine < logData_->getNbLine() ) {
+                            return logFilteredData_->getMatchingLineNumber( filteredLine );
+                        }
+                        else {
+                            return maxValue<LineNumber>();
+                        }
+                    } );
+
+    deleteMarkLinesFromMain( linesInMain );
 }
 
 void CrawlerWidget::applyConfiguration()
@@ -1346,6 +1372,8 @@ void CrawlerWidget::setup()
              &CrawlerWidget::updateLineNumberHandler );
 
     connect( logMainView_, &LogMainView::markLines, this, &CrawlerWidget::markLinesFromMain );
+    connect( logMainView_, &LogMainView::deleteMarkLines, this,
+             &CrawlerWidget::deleteMarkLinesFromMain );
 
     connect( logMainView_, &LogMainView::highlightersChange, this,
              &CrawlerWidget::applyConfiguration );
@@ -1501,6 +1529,8 @@ void CrawlerWidget::connectAllFilteredViewSlots( FilteredView* view )
     connect( view, &FilteredView::newSelection, this, &CrawlerWidget::jumpToMatchingLine );
 
     connect( view, &FilteredView::markLines, this, &CrawlerWidget::markLinesFromFiltered );
+    connect( view, &FilteredView::deleteMarkLines, this,
+             &CrawlerWidget::deleteMarkLinesFromFiltered );
 
     connect( view, &FilteredView::highlightersChange, this, &CrawlerWidget::applyConfiguration );
 

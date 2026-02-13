@@ -78,6 +78,7 @@ struct ShortcutAction {
     static constexpr auto MainWindowOpenFromUrl = "mainwindow.open_from_url";
 
     static constexpr auto LogViewMark = "logview.mark";
+    static constexpr auto LogViewDeleteMark = "logview.delete_mark";
     static constexpr auto LogViewNextMark = "logview.next_mark";
     static constexpr auto LogViewPrevMark = "logview.prev_mark";
     static constexpr auto LogViewSelectionUp = "logview.selection_up";

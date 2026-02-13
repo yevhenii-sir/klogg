@@ -64,6 +64,43 @@ QString makeSessionSettingsPath( const QString& appConfigPath )
         .absoluteDir()
         .filePath( QString( SessionSettingsFile ) + PortableExtension );
 }
+
+#ifdef Q_OS_MAC
+QString resolvePortableConfigPath( const QString& executableDirPath )
+{
+    const auto portableConfigName = QString( ApplicationSessionFile ) + PortableExtension;
+    const auto bundledPortableConfigPath = QDir( executableDirPath ).filePath( portableConfigName );
+
+    if ( QFileInfo::exists( bundledPortableConfigPath ) ) {
+        return bundledPortableConfigPath;
+    }
+
+    QDir executableDir{ executableDirPath };
+    if ( executableDir.dirName() != "MacOS" ) {
+        return bundledPortableConfigPath;
+    }
+
+    if ( !executableDir.cdUp() || executableDir.dirName() != "Contents" ) {
+        return bundledPortableConfigPath;
+    }
+
+    if ( !executableDir.cdUp() || !executableDir.dirName().endsWith( ".app", Qt::CaseInsensitive ) ) {
+        return bundledPortableConfigPath;
+    }
+
+    if ( !executableDir.cdUp() ) {
+        return bundledPortableConfigPath;
+    }
+
+    const auto siblingPortableConfigPath = executableDir.filePath( portableConfigName );
+    if ( QFileInfo::exists( siblingPortableConfigPath ) ) {
+        LOG_INFO << "Using portable config next to app bundle " << siblingPortableConfigPath;
+        return siblingPortableConfigPath;
+    }
+
+    return bundledPortableConfigPath;
+}
+#endif
 } // namespace
 
 PersistentInfo::PersistentInfo()
@@ -78,8 +115,12 @@ PersistentInfo::PersistentInfo()
         executablePath = QString::fromUtf8( path.data(), dirnameLength );
     }
 
-    const auto portableConfigPath
+    auto portableConfigPath
         = executablePath + QDir::separator() + ApplicationSessionFile + PortableExtension;
+
+#ifdef Q_OS_MAC
+    portableConfigPath = resolvePortableConfigPath( executablePath );
+#endif
 
     LOG_INFO << "Portable config path " << portableConfigPath;
 

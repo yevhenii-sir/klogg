@@ -22,6 +22,8 @@
 
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTimer>
+#include <qhash.h>
 #include <qobjectdefs.h>
 #include <qtabbar.h>
 #include <qwidget.h>
@@ -30,6 +32,7 @@
 #include "tabgroup.h"
 
 class QMenu;
+class QPaintEvent;
 
 // This class represents glogg's main widget, a tabbed
 // group of CrawlerWidgets.
@@ -39,12 +42,25 @@ class QMenu;
 class CrawlerTabBar : public QTabBar {
   Q_OBJECT
 
+  public:
+    explicit CrawlerTabBar( QWidget* parent = nullptr );
+
   Q_SIGNALS:
-    void showTabContextMenu(int tab, QPoint point);
+    void showTabContextMenu( int tab, QPoint point );
+    void tabDragStarted();
+    void tabDragFinished();
 
   protected:
+    void mousePressEvent( QMouseEvent* ) override;
     void mouseReleaseEvent( QMouseEvent* ) override;
+    void paintEvent( QPaintEvent* event ) override;
 
+  private Q_SLOTS:
+    void handleTabMoved( int from, int to );
+
+  private:
+    bool leftButtonPressed_ = false;
+    bool tabMovedWhilePressed_ = false;
 };
 
 class TabbedCrawlerWidget : public QTabWidget {
@@ -74,6 +90,9 @@ class TabbedCrawlerWidget : public QTabWidget {
 
     void removeCrawler( int index );
 
+  Q_SIGNALS:
+    void tabsReordered();
+
   protected:
     void keyPressEvent( QKeyEvent* event ) override;
     void mouseReleaseEvent( QMouseEvent* event ) override;
@@ -82,6 +101,18 @@ class TabbedCrawlerWidget : public QTabWidget {
   private:
     void addTabBarItem( int index, const QString& fileName );
     QString tabPathAt( int index ) const;
+    int tabIndexForPath( const QString& tabPath ) const;
+    void setTabVisibleCompat( int index, bool visible );
+    void handleTabMoved( int from, int to );
+    void handleTabDragFinished();
+    void handleDragSettleTimeout();
+    void applyPendingDragGrouping();
+    QString resolveDropTargetGroupId( int droppedIndex, const QString& droppedTabPath,
+                                      const QString& currentGroupId ) const;
+    QString resolveCollapsedAnchorPath( const QString& groupId, const TabGroup& group );
+    bool updateGroupChip( int tabIndex, const TabGroup* group );
+    void clearGroupChip( int tabIndex );
+    void populateGroupActions( QMenu* menu, const QString& groupId );
 
     // Set the data status (icon) for the tab number 'index'
     void setTabDataStatus( int index, DataStatus status );
@@ -99,12 +130,19 @@ class TabbedCrawlerWidget : public QTabWidget {
   private:
     void buildGroupSubmenu( QMenu* menu, int tabIndex );
     void createNewGroupDialog( int tabIndex );
-    void showGroupContextMenu( const QString& groupId, QPoint globalPoint );
 
   private:
     QIcon olddata_icon_;
     QIcon newdata_icon_;
     QIcon newfiltered_icon_;
+
+    QString draggedTabPath_;
+    bool tabDragInProgress_ = false;
+    bool pendingGroupsRefresh_ = false;
+    bool reorderChangedDuringDrag_ = false;
+    QTimer dragSettleTimer_;
+    QHash<QString, QString> collapsedAnchorByGroup_;
+    QHash<QString, bool> collapsedStateByGroup_;
 
     CrawlerTabBar myTabBar_;
 };

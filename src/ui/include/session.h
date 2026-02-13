@@ -232,7 +232,8 @@ class WindowSession {
     // the main window know the order in which the views are presented to
     // the user (it might have changed since file were opened).
     // Also, the geometry information is passed as an opaque string.
-    void save( const std::vector<SaveFileInfo>& view_list, const QByteArray& geometry );
+    void save( const std::vector<SaveFileInfo>& view_list, const QByteArray& geometry,
+               int current_file_index );
 
     // returns true if caller needs to save settings
     bool close();

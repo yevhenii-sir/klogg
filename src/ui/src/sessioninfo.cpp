@@ -24,22 +24,27 @@
 #include "log.h"
 
 constexpr int OPENFILES_VERSION = 1;
-constexpr int SESSION_VERSION = 1;
+constexpr int SESSION_VERSION = 2;
 
 void SessionInfo::retrieveFromStorage( QSettings& settings )
 {
     LOG_DEBUG << "SessionInfo::retrieveFromStorage";
 
+    windows_.clear();
+    dirtyShutdown_ = false;
+
     settings.beginGroup( "Window" );
 
-    if ( settings.value( "version", 0 ).toInt() == SESSION_VERSION ) {
-        windows_.clear();
+    const auto sessionVersion = settings.value( "version", 0 ).toInt();
+    if ( sessionVersion == 1 || sessionVersion == SESSION_VERSION ) {
+        dirtyShutdown_ = settings.value( "dirtyShutdown", false ).toBool();
         const auto windowsCount = settings.beginReadArray( "windows" );
         for ( auto windowIndex = 0; windowIndex < windowsCount; ++windowIndex ) {
             settings.setArrayIndex( static_cast<int>( windowIndex ) );
             QString windowId = settings.value( "id" ).toString();
             auto window = Window{ windowId };
             window.geometry = settings.value( "geometry" ).toByteArray();
+            window.currentFileIndex = settings.value( "currentFileIndex", -1 ).toInt();
 
             if ( settings.contains( "OpenFiles/version" ) ) {
                 settings.beginGroup( "OpenFiles" );
@@ -79,6 +84,7 @@ void SessionInfo::saveToStorage( QSettings& settings ) const
 
     settings.beginGroup( "Window" );
     settings.setValue( "version", SESSION_VERSION );
+    settings.setValue( "dirtyShutdown", dirtyShutdown_ );
 
     settings.remove( "windows" );
     settings.beginWriteArray( "windows" );
@@ -88,6 +94,7 @@ void SessionInfo::saveToStorage( QSettings& settings ) const
 
         settings.setValue( "id", window.id );
         settings.setValue( "geometry", window.geometry );
+        settings.setValue( "currentFileIndex", window.currentFileIndex );
 
         settings.beginGroup( "OpenFiles" );
         settings.setValue( "version", OPENFILES_VERSION );
@@ -105,4 +112,5 @@ void SessionInfo::saveToStorage( QSettings& settings ) const
     }
     settings.endArray();
     settings.endGroup(); // Win
+    settings.sync();
 }

@@ -73,17 +73,21 @@ LogData::LogData()
     , codec_( QTextCodec::codecForName( "UTF-8" ) )
 {
     // Initialise the file watcher
-    connect( &FileWatcher::getFileWatcher(), &FileWatcher::fileChanged, this,
-             &LogData::fileChangedOnDisk, Qt::QueuedConnection );
+    fileWatcherConnection_
+        = connect( &FileWatcher::getFileWatcher(), &FileWatcher::fileChanged, this,
+                   &LogData::fileChangedOnDisk, Qt::QueuedConnection );
 
     auto worker = std::make_unique<LogDataWorker>( indexing_data_ );
 
     // Forward the update signal
-    connect( worker.get(), &LogDataWorker::indexingProgressed, this, &LogData::loadingProgressed );
-    connect( worker.get(), &LogDataWorker::indexingFinished, this, &LogData::indexingFinished,
-             Qt::QueuedConnection );
-    connect( worker.get(), &LogDataWorker::checkFileChangesFinished, this,
-             &LogData::checkFileChangesFinished, Qt::QueuedConnection );
+    workerIndexingProgressConnection_
+        = connect( worker.get(), &LogDataWorker::indexingProgressed, this, &LogData::loadingProgressed );
+    workerIndexingFinishedConnection_
+        = connect( worker.get(), &LogDataWorker::indexingFinished, this, &LogData::indexingFinished,
+                   Qt::QueuedConnection );
+    workerCheckFileChangesFinishedConnection_
+        = connect( worker.get(), &LogDataWorker::checkFileChangesFinished, this,
+                   &LogData::checkFileChangesFinished, Qt::QueuedConnection );
 
     operationQueue_.setWorker( std::move( worker ) );
 
@@ -103,6 +107,11 @@ LogData::LogData()
 LogData::~LogData()
 {
     LOG_DEBUG << "Destroying log data";
+    QObject::disconnect( fileWatcherConnection_ );
+    QObject::disconnect( workerIndexingProgressConnection_ );
+    QObject::disconnect( workerIndexingFinishedConnection_ );
+    QObject::disconnect( workerCheckFileChangesFinishedConnection_ );
+    QObject::disconnect( this, nullptr, nullptr, nullptr );
     operationQueue_.shutdown();
 }
 

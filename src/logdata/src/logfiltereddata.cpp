@@ -92,13 +92,15 @@ LogFilteredData::LogFilteredData( const LogData* logData )
 
 LogFilteredData::~LogFilteredData()
 {
-    // Disconnect all signals to ensure no callbacks are invoked during destruction
-    disconnect( &searchProgressThrottler_, nullptr, this, nullptr );
-    disconnect( this, &LogFilteredData::searchProgressedThrottled, nullptr, nullptr );
+    // Disconnect worker and throttler links first to prevent callbacks hitting
+    // a partially destroyed instance while shutdown is in progress.
     disconnect( &workerThread_, nullptr, this, nullptr );
-    
-    // Interrupt any ongoing search operation
-    workerThread_.interrupt();
+    disconnect( this, nullptr, &workerThread_, nullptr );
+    disconnect( &searchProgressThrottler_, nullptr, this, nullptr );
+    disconnect( this, nullptr, &searchProgressThrottler_, nullptr );
+
+    interruptSearch();
+    detachReader();
 }
 
 void LogFilteredData::runSearch( const RegularExpressionPattern& regExp )

@@ -550,16 +550,24 @@ void AbstractLogView::mousePressEvent( QMouseEvent* mouseEvent )
         }
 
         bool hasUnmarkedLines = false;
+        bool hasMarkedLines = false;
         auto lines = selection_.getLines();
         for ( auto i = 0u; i < lines.size(); ++i ) {
             using LineTypeFlags = AbstractLogData::LineTypeFlags;
             const auto currentLineType = lineType( lines[ i ] );
             if ( !currentLineType.testFlag( LineTypeFlags::Mark ) ) {
                 hasUnmarkedLines = true;
+            }
+            else {
+                hasMarkedLines = true;
+            }
+
+            if ( hasUnmarkedLines && hasMarkedLines ) {
                 break;
             }
         }
-        markAction_->setText( hasUnmarkedLines ? tr( "&Mark" ) : tr( "Unmark" ) );
+        markAction_->setEnabled( hasUnmarkedLines );
+        deleteMarkAction_->setEnabled( hasMarkedLines );
 
         if ( selection_.isPortion() ) {
             findNextAction_->setEnabled( true );
@@ -708,7 +716,12 @@ void AbstractLogView::mouseReleaseEvent( QMouseEvent* mouseEvent )
             // Invalidate our cache
             textAreaCache_.invalid_ = true;
 
-            Q_EMIT markLines( { *line } );
+            if ( lineType( *line ).testFlag( AbstractLogData::LineTypeFlags::Mark ) ) {
+                Q_EMIT deleteMarkLines( { *line } );
+            }
+            else {
+                Q_EMIT markLines( { *line } );
+            }
         }
     }
     else {
@@ -848,6 +861,8 @@ void AbstractLogView::doRegisterShortcuts()
                       [ this ]() { findPreviousSelected(); } );
 
     registerShortcut( ShortcutAction::LogViewMark, [ this ]() { markSelected(); } );
+    registerShortcut( ShortcutAction::LogViewDeleteMark,
+                      [ this ]() { deleteMarksSelected(); } );
 
     registerShortcut( ShortcutAction::LogViewJumpToLineNumber, [ this ]() {
         const auto newLine = qMax( 0ull, digitsBuffer_.content() - 1ull );
@@ -1535,6 +1550,14 @@ void AbstractLogView::markSelected()
     auto lines = selection_.getLines();
     if ( !lines.empty() ) {
         Q_EMIT markLines( lines );
+    }
+}
+
+void AbstractLogView::deleteMarksSelected()
+{
+    auto lines = selection_.getLines();
+    if ( !lines.empty() ) {
+        Q_EMIT deleteMarkLines( lines );
     }
 }
 
@@ -2230,8 +2253,12 @@ void AbstractLogView::createMenu()
     connect( copyWithLineNumbersAction_, &QAction::triggered, this,
              [ this ]( auto ) { this->copyWithLineNumbers(); } );
 
-    markAction_ = new QAction( tr( "&Mark" ), this );
+    markAction_ = new QAction( tr( "Add line mark" ), this );
     connect( markAction_, &QAction::triggered, this, [ this ]( auto ) { this->markSelected(); } );
+
+    deleteMarkAction_ = new QAction( tr( "Delete line mark" ), this );
+    connect( deleteMarkAction_, &QAction::triggered, this,
+             [ this ]( auto ) { this->deleteMarksSelected(); } );
 
     saveToFileAction_ = new QAction( tr( "Save to file" ), this );
     connect( saveToFileAction_, &QAction::triggered, this,
@@ -2310,6 +2337,7 @@ void AbstractLogView::createMenu()
 
     popupMenu_->addSeparator();
     popupMenu_->addAction( markAction_ );
+    popupMenu_->addAction( deleteMarkAction_ );
     popupMenu_->addSeparator();
     popupMenu_->addAction( copyAction_ );
     popupMenu_->addAction( copyWithLineNumbersAction_ );

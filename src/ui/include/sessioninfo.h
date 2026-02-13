@@ -81,6 +81,7 @@ class SessionInfo : public Persistable<SessionInfo, session_settings> {
 
         QString id;
         QByteArray geometry;
+        int currentFileIndex = -1;
         std::vector<OpenFile> openFiles;
     };
 
@@ -145,6 +146,30 @@ class SessionInfo : public Persistable<SessionInfo, session_settings> {
         }
     }
 
+    int currentFileIndex( const QString& windowId ) const
+    {
+        auto window = findWindow( windowId );
+        return window ? window->currentFileIndex : -1;
+    }
+
+    void setCurrentFileIndex( const QString& windowId, int currentFileIndex )
+    {
+        auto window = findWindow( windowId );
+        if ( window ) {
+            window->currentFileIndex = currentFileIndex;
+        }
+    }
+
+    bool hadUncleanShutdown() const
+    {
+        return dirtyShutdown_;
+    }
+
+    void setDirtyShutdown( bool dirtyShutdown )
+    {
+        dirtyShutdown_ = dirtyShutdown;
+    }
+
     // Reads/writes the current config in the QSettings object passed
     void saveToStorage( QSettings& settings ) const;
     void retrieveFromStorage( QSettings& settings );
@@ -166,6 +191,7 @@ class SessionInfo : public Persistable<SessionInfo, session_settings> {
 
   private:
     mutable std::vector<Window> windows_;
+    bool dirtyShutdown_ = false;
 };
 
 #endif

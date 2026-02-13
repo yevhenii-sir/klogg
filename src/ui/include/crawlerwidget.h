@@ -205,8 +205,12 @@ class CrawlerWidget : public QSplitter,
                                   LineLength nSymbols );
     // Mark a line that has been clicked on the main (top) view.
     void markLinesFromMain( const klogg::vector<LineNumber>& lines );
+    // Remove marks for lines selected in the main (top) view.
+    void deleteMarkLinesFromMain( const klogg::vector<LineNumber>& lines );
     // Mark a line that has been clicked on the filtered (bottom) view.
     void markLinesFromFiltered( const klogg::vector<LineNumber>& lines );
+    // Remove marks for lines selected in the filtered (bottom) view.
+    void deleteMarkLinesFromFiltered( const klogg::vector<LineNumber>& lines );
 
     void loadingFinishedHandler( LoadingStatus status );
     // Manages the info lines to inform the user the file has changed.

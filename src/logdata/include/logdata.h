@@ -43,6 +43,7 @@
 
 #include <QDateTime>
 #include <QFile>
+#include <QMetaObject>
 #include <QObject>
 #include <QString>
 #include <QTextCodec>
@@ -183,6 +184,11 @@ class LogData : public AbstractLogData {
     MonitoredFileStatus fileChangedOnDisk_;
 
     QString prefilterPattern_;
+
+    QMetaObject::Connection fileWatcherConnection_;
+    QMetaObject::Connection workerIndexingProgressConnection_;
+    QMetaObject::Connection workerIndexingFinishedConnection_;
+    QMetaObject::Connection workerCheckFileChangesFinishedConnection_;
 };
 
 #endif

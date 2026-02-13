@@ -3,6 +3,9 @@ add_executable(klogg_tests
     cli_test.cpp
     linepositionarray_test.cpp
     patternmatcher_test.cpp
+    sessioninfo_test.cpp
+    tabgroupdropresolver_test.cpp
+    tabgroupmanager_test.cpp
     tests_main.cpp
 )
 

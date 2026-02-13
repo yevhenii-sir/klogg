@@ -143,6 +143,7 @@ class OperationQueue {
     
     OperationVariant executingOperation_;
     OperationVariant pendingOperation_;
+    bool shuttingDown_{ false };
 
     std::unique_ptr<LogDataWorker> worker_;
 };

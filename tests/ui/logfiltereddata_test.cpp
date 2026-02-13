@@ -267,6 +267,30 @@ SCENARIO( "search for regex", "[logdata]" )
     }
 }
 
+SCENARIO( "repeated filtered data lifecycle is stable after search", "[logdata][stability]" )
+{
+    LogDataLoader logDataLoader;
+
+    GIVEN( "repeated create-search-destroy cycles" )
+    {
+        auto& config = Configuration::getSynced();
+
+        for ( int threadPoolSize : { 0, 1, 2 } ) {
+            config.setSearchThreadPoolSize( threadPoolSize );
+            config.setUseParallelSearch( threadPoolSize > 0 );
+
+            for ( int i = 0; i < 20; ++i ) {
+                auto filtered_data = logDataLoader.log_data.getNewFilteredData();
+                SafeQSignalSpy searchProgressSpy{ filtered_data.get(),
+                                                  &LogFilteredData::searchProgressed };
+
+                runSearch( filtered_data.get(), "this is line [0-9]{5}9", searchProgressSpy );
+                REQUIRE( filtered_data->getNbMatches() == 50_lcount );
+            }
+        }
+    }
+}
+
 SCENARIO( "marks and matches in filtered log data", "[logdata]" )
 {
     LogDataLoader logDataLoader;

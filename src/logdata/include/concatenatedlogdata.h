@@ -23,6 +23,7 @@
 #include <memory>
 #include <vector>
 
+#include <QMetaObject>
 #include <QObject>
 #include <QString>
 
@@ -46,6 +47,7 @@ class ConcatenatedLogData : public AbstractLogData {
 
   public:
     ConcatenatedLogData();
+    ~ConcatenatedLogData() override;
 
     // Add a source LogData. Lines from this source will appear after all
     // previously added sources. The caller retains ownership.
@@ -86,7 +88,9 @@ class ConcatenatedLogData : public AbstractLogData {
   private:
     struct SourceInfo {
         std::shared_ptr<LogData> logData;
-        LinesCount cumulativeLines; // total lines from this source and all before it
+        LinesCount cumulativeLines = 0_lcount; // total lines from this source and all before it
+        QMetaObject::Connection loadingFinishedConnection;
+        QMetaObject::Connection fileChangedConnection;
     };
 
     std::vector<SourceInfo> sources_;

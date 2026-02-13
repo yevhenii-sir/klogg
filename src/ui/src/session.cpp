@@ -215,7 +215,7 @@ std::vector<WindowSession> Session::windowSessions()
 void WindowSession::save(
     const std::vector<std::tuple<const ViewInterface*, uint64_t,
                                  std::shared_ptr<const ViewContextInterface>>>& view_list,
-    const QByteArray& geometry )
+    const QByteArray& geometry, int current_file_index )
 {
     LOG_DEBUG << "Session::save";
 
@@ -237,6 +237,7 @@ void WindowSession::save(
     auto& session = SessionInfo::getSynced();
     session.setOpenFiles( windowId_, session_files );
     session.setGeometry( windowId_, geometry );
+    session.setCurrentFileIndex( windowId_, current_file_index );
     session.save();
 }
 
@@ -258,7 +259,13 @@ WindowSession::restore( const std::function<ViewInterface*()>& view_factory,
         openedFiles_.emplace_back( file.fileName );
     }
 
-    *current_file_index = klogg::isize( result ) - 1;
+    const auto restoredCurrentIndex = session.currentFileIndex( windowId_ );
+    if ( restoredCurrentIndex >= 0 && restoredCurrentIndex < klogg::isize( result ) ) {
+        *current_file_index = restoredCurrentIndex;
+    }
+    else {
+        *current_file_index = klogg::isize( result ) - 1;
+    }
 
     return result;
 }

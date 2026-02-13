@@ -27,6 +27,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QUuid>
 
 #include <QToolBar>
 
@@ -36,6 +37,7 @@
 #include "log.h"
 #include "mainwindow.h"
 #include "session.h"
+#include "sessioninfo.h"
 
 SCENARIO( "Main window tests", "[ui]" )
 {
@@ -341,4 +343,73 @@ SCENARIO( "Session::openMerged produces correct merged file", "[session][merge]"
             appSession->close( view );
         }
     }
+}
+
+SCENARIO( "MainWindow close keeps persisted open files for session restore", "[ui][session]" )
+{
+    auto appSession = std::make_shared<Session>();
+    auto& sessionInfo = SessionInfo::getSynced();
+    auto windowIds = sessionInfo.windows();
+    const auto windowId = windowIds.isEmpty()
+                              ? QString( "close-session-%1" ).arg(
+                                    QUuid::createUuid().toString( QUuid::WithoutBraces ) )
+                              : windowIds.front();
+
+    if ( windowIds.isEmpty() ) {
+        sessionInfo.add( windowId );
+    }
+    else {
+        for ( auto i = windowIds.size() - 1; i > 0; --i ) {
+            sessionInfo.remove( windowIds.at( i ) );
+        }
+    }
+    sessionInfo.setOpenFiles( windowId, {} );
+    sessionInfo.setCurrentFileIndex( windowId, -1 );
+    sessionInfo.save();
+
+    WindowSession windowSession{ appSession, windowId, 0 };
+
+    auto& config = Configuration::get();
+    const auto previousMinimizeToTray = config.minimizeToTray();
+    config.setMinimizeToTray( false );
+    config.save();
+
+    std::unique_ptr<MainWindow> mainWindow;
+    QTimer::singleShot( 0, [&] { mainWindow.reset( new MainWindow( windowSession ) ); } );
+
+    QTest::qWait( 100 );
+    mainWindow->show();
+    QTest::qWait( 100 );
+
+    auto runInUiThread = [uiObject = mainWindow.get()]( auto&& func ) {
+        QTimer::singleShot( 0, Qt::VeryCoarseTimer, uiObject,
+                            std::forward<decltype( func )>( func ) );
+        QTest::qWait( 100 );
+    };
+
+    auto tabArea = mainWindow->findChild<TabbedCrawlerWidget*>();
+    REQUIRE( tabArea != nullptr );
+
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+    const auto testFilePath = tempDir.filePath( "restore.log" );
+    {
+        QFile testFile( testFilePath );
+        REQUIRE( testFile.open( QIODevice::WriteOnly | QIODevice::Truncate ) );
+        testFile.write( "line\n" );
+    }
+
+    runInUiThread( [&mainWindow, testFilePath] { mainWindow->loadInitialFile( testFilePath, false ); } );
+    REQUIRE( waitUiState( [&] { return tabArea->count() == 1; } ) );
+    REQUIRE( waitUiState( [&] { return SessionInfo::getSynced().openFiles( windowId ).size() == 1; } ) );
+
+    runInUiThread( [&mainWindow] { mainWindow->close(); } );
+    REQUIRE( waitUiState( [&] { return !mainWindow->isVisible(); } ) );
+
+    const auto persistedOpenFiles = SessionInfo::getSynced().openFiles( windowId );
+    REQUIRE( persistedOpenFiles.size() == 1 );
+    REQUIRE( persistedOpenFiles.front().fileName == testFilePath );
+
+    config.setMinimizeToTray( previousMinimizeToTray );
+    config.save();
 }

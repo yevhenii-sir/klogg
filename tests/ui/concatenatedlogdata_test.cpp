@@ -19,9 +19,13 @@
 
 #include <catch2/catch.hpp>
 
+#include <QCoreApplication>
+#include <QEventLoop>
+#include <QFileInfo>
 #include <QSignalSpy>
 #include <QTemporaryFile>
 #include <QTest>
+#include <QTimer>
 
 #include "test_utils.h"
 
@@ -32,8 +36,40 @@ namespace {
 
 // Helper: create a temp file with specified lines, return (file, shared LogData)
 struct TestLogSource {
+    // QTemporaryFile auto-remove can race with background file watcher teardown
+    // on Windows, so keep cleanup under test lifecycle control.
     QTemporaryFile file{ "concat_test_XXXXXX" };
+    QString filePath;
     std::shared_ptr<LogData> logData = std::make_shared<LogData>();
+    bool attached = false;
+
+    TestLogSource()
+    {
+        file.setAutoRemove( false );
+    }
+
+    ~TestLogSource()
+    {
+        shutdown();
+    }
+
+    void shutdown()
+    {
+        if ( logData ) {
+            logData->interruptLoading();
+            if ( attached ) {
+                logData->detachReader();
+            }
+            QCoreApplication::processEvents( QEventLoop::AllEvents, 20 );
+            logData.reset();
+            QCoreApplication::processEvents( QEventLoop::AllEvents, 20 );
+            attached = false;
+        }
+
+        if ( file.isOpen() ) {
+            file.close();
+        }
+    }
 
     bool create( const QStringList& lines )
     {
@@ -45,10 +81,44 @@ struct TestLogSource {
             file.write( "\n" );
         }
         file.flush();
+        filePath = QFileInfo{ file }.absoluteFilePath();
+        file.close();
 
-        SafeQSignalSpy loadSpy( logData.get(), SIGNAL( loadingFinished( LoadingStatus ) ) );
-        logData->attachFile( file.fileName() );
-        return loadSpy.safeWait( 10000 );
+        QEventLoop loop;
+        QTimer timeoutTimer;
+        timeoutTimer.setSingleShot( true );
+
+        auto receivedSignal = false;
+        auto status = LoadingStatus::Interrupted;
+
+        auto loadingFinishedConnection
+            = QObject::connect( logData.get(), &LogData::loadingFinished, &loop,
+                                [ & ]( LoadingStatus loadingStatus ) {
+                                    status = loadingStatus;
+                                    receivedSignal = true;
+                                    loop.quit();
+                                } );
+        auto timeoutConnection
+            = QObject::connect( &timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit );
+
+        logData->attachFile( filePath );
+        attached = true;
+
+        timeoutTimer.start( 10000 );
+        if ( !receivedSignal ) {
+            loop.exec();
+        }
+
+        QObject::disconnect( loadingFinishedConnection );
+        QObject::disconnect( timeoutConnection );
+
+        if ( !receivedSignal || status != LoadingStatus::Successful ) {
+            return false;
+        }
+
+        const auto expectedLines
+            = LinesCount( static_cast<LinesCount::UnderlyingType>( lines.size() ) );
+        return waitUiState( [ & ] { return logData->getNbLine() == expectedLines; } );
     }
 };
 
@@ -351,5 +421,35 @@ SCENARIO( "concatenated log data attach/detach reader", "[concatenatedlogdata]" 
                 REQUIRE( true );
             }
         }
+    }
+}
+
+SCENARIO( "concatenated log data repeated lifecycle", "[concatenatedlogdata][stability]" )
+{
+    constexpr int Iterations = 20;
+
+    for ( int iteration = 0; iteration < Iterations; ++iteration ) {
+        TestLogSource src1, src2, src3;
+        REQUIRE( src1.create( { "aaa", "bbb" } ) );
+        REQUIRE( src2.create( { "ccc", "ddd", "eee" } ) );
+        REQUIRE( src3.create( { "fff" } ) );
+
+        {
+            ConcatenatedLogData concat;
+            concat.addSource( src1.logData );
+            concat.addSource( src2.logData );
+            concat.addSource( src3.logData );
+
+            REQUIRE( concat.sourceCount() == 3 );
+            REQUIRE( concat.getNbLine() == 6_lcount );
+            REQUIRE( concat.getLineString( 0_lnum ) == "aaa" );
+            REQUIRE( concat.getLineString( 5_lnum ) == "fff" );
+
+            concat.attachReader();
+            concat.detachReader();
+        }
+
+        QCoreApplication::processEvents( QEventLoop::AllEvents, 20 );
+        QTest::qWait( 1 );
     }
 }

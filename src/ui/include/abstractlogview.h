@@ -216,6 +216,8 @@ class AbstractLogView : public QAbstractScrollArea, public SearchableWidgetInter
     // Sent when the view ask for a line to be marked
     // (click in the left margin).
     void markLines( const klogg::vector<LineNumber>& lines );
+    // Sent when the view asks marks to be removed for selected lines.
+    void deleteMarkLines( const klogg::vector<LineNumber>& lines );
     // Sent up when the user wants to add the selection to the search
     void addToSearch( const QString& selection );
     // Sent up when the user wants to replace the search with the selection
@@ -301,6 +303,7 @@ class AbstractLogView : public QAbstractScrollArea, public SearchableWidgetInter
     void copy();
     void copyWithLineNumbers();
     void markSelected();
+    void deleteMarksSelected();
     void saveToFile();
     void saveSelectedToFile();
     void setSearchStart();
@@ -406,6 +409,7 @@ class AbstractLogView : public QAbstractScrollArea, public SearchableWidgetInter
     QAction* copyAction_;
     QAction* copyWithLineNumbersAction_;
     QAction* markAction_;
+    QAction* deleteMarkAction_;
     QAction* sendToScratchpadAction_;
     QAction* replaceInScratchpadAction_;
     QAction* saveToFileAction_;
