@@ -21,6 +21,7 @@
 #include <catch2/catch.hpp>
 
 #include <QApplication>
+#include <QDir>
 
 #include <logger.h>
 
@@ -29,13 +30,34 @@
 
 const bool PersistentInfo::ForcePortable = true;
 
+namespace {
+void configureTestTempDir()
+{
+    const auto tempDir = QDir::cleanPath( QDir::currentPath() + QDir::separator()
+                                          + QLatin1String( "test_tmp" ) );
+    QDir{}.mkpath( tempDir );
+
+    const auto tempDirUtf8 = QDir::toNativeSeparators( tempDir ).toUtf8();
+    qputenv( "TMP", tempDirUtf8 );
+    qputenv( "TEMP", tempDirUtf8 );
+    qputenv( "TMPDIR", tempDirUtf8 );
+}
+} // namespace
+
 int main( int argc, char* argv[] )
 {
     QApplication a( argc, argv );
 
-    logging::enableLogging();
+    logging::enableLogging( true, logging::LogLevel::Warning );
+    configureTestTempDir();
 
-    Configuration::getSynced();
+    auto& config = Configuration::getSynced();
+    Q_UNUSED( config );
+#ifdef Q_OS_WIN
+    // Windows builds can hit instability in the HS backend with the current
+    // Vectorscan toolchain; use the Qt engine for deterministic tests.
+    config.setRegexpEnging( RegexpEngine::QRegularExpression );
+#endif
 
     return Catch::Session().run( argc, argv );
 }

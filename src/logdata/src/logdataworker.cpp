@@ -37,6 +37,7 @@
  */
 
 #include <chrono>
+#include <cstdio>
 #include <exception>
 #include <functional>
 #include <qglobal.h>
@@ -62,7 +63,6 @@
 #include "memory_info.h"
 #include "progress.h"
 #include "readablesize.h"
-#include "runnable_lambda.h"
 
 #include "logdataworker.h"
 
@@ -184,18 +184,17 @@ size_t IndexingData::allocatedSize() const
 LogDataWorker::LogDataWorker( const std::shared_ptr<IndexingData>& indexing_data )
     : indexing_data_( indexing_data )
 {
-    operationsPool_.setMaxThreadCount( 1 );
 }
 
 LogDataWorker::~LogDataWorker() noexcept
 {
-    try {
-        interruptRequest_.set();
-        operationsPool_.clear();
-        operationsPool_.waitForDone();
-        LOG_INFO << "LogDataWorker shutdown";
-    } catch ( const std::exception& e ) {
-        LOG_ERROR << "Failed to destroy LogDataWorker: " << e.what();
+    // Signal any running task to stop, then wait for the thread to fully exit
+    // before any other members are destroyed.  std::thread::join() guarantees
+    // the OS thread has completely exited — no race with internal Qt thread-pool
+    // cleanup (QMutex::lock / QThread::isRunning crashes seen in Qt 5.15/6.9).
+    interruptRequest_.set();
+    if ( opThread_.joinable() ) {
+        opThread_.join();
     }
 }
 
@@ -209,80 +208,86 @@ void LogDataWorker::attachFile( const QString& fileName )
 void LogDataWorker::indexAll( QTextCodec* forcedEncoding )
 {
     ScopedLock locker( operationsMutex_ );
-    operationsPool_.waitForDone();
+    if ( opThread_.joinable() ) {
+        opThread_.join();
+    }
     interruptRequest_.clear();
 
     LOG_INFO << "FullIndex requested, forced encoding: "
              << ( forcedEncoding != nullptr ? forcedEncoding->name().toStdString()
                                             : std::string{ "none" } );
     QSemaphore operationStarted;
-    operationsPool_.start(
-        createRunnable( [ this, &operationStarted, forcedEncoding, fileName = fileName_ ] {
-            LOG_INFO << "FullIndex thread started";
-            operationStarted.release();
-            ScopedLock operationLock( operationsMutex_ );
-            auto operationRequested = std::make_unique<FullIndexOperation>(
-                fileName, indexing_data_, interruptRequest_, forcedEncoding );
-            return connectSignalsAndRun( operationRequested.get() );
-        } ) );
+    opThread_ = std::thread( [ this, &operationStarted, forcedEncoding, fileName = fileName_ ] {
+        LOG_INFO << "FullIndex thread started";
+        operationStarted.release();
+        ScopedLock operationLock( operationsMutex_ );
+        auto operationRequested = std::make_unique<FullIndexOperation>(
+            fileName, indexing_data_, interruptRequest_, forcedEncoding );
+        connectSignalsAndRun( operationRequested.get() );
+    } );
     operationStarted.acquire();
 }
 
 void LogDataWorker::indexAdditionalLines()
 {
     ScopedLock locker( operationsMutex_ );
-    operationsPool_.waitForDone();
+    if ( opThread_.joinable() ) {
+        opThread_.join();
+    }
     interruptRequest_.clear();
 
     LOG_INFO << "PartialIndex requested";
 
     QSemaphore operationStarted;
-    operationsPool_.start( createRunnable( [ this, &operationStarted, fileName = fileName_ ] {
-        QThread::currentThread()->setObjectName( "PartialIndex" );
+    opThread_ = std::thread( [ this, &operationStarted, fileName = fileName_ ] {
         LOG_INFO << "PartialIndex thread started";
         operationStarted.release();
         ScopedLock operationLock( operationsMutex_ );
         auto operationRequested = std::make_unique<PartialIndexOperation>( fileName, indexing_data_,
                                                                            interruptRequest_ );
-        return connectSignalsAndRun( operationRequested.get() );
-    } ) );
+        connectSignalsAndRun( operationRequested.get() );
+    } );
     operationStarted.acquire();
 }
 
 void LogDataWorker::checkFileChanges()
 {
     ScopedLock locker( operationsMutex_ );
-    operationsPool_.waitForDone();
+    if ( opThread_.joinable() ) {
+        opThread_.join();
+    }
     interruptRequest_.clear();
 
     LOG_INFO << "Check file changes requested";
 
     QSemaphore operationStarted;
-    operationsPool_.start( createRunnable( [ this, &operationStarted, fileName = fileName_ ] {
+    opThread_ = std::thread( [ this, &operationStarted, fileName = fileName_ ] {
         operationStarted.release();
         ScopedLock operationLock( operationsMutex_ );
         auto operationRequested = std::make_unique<CheckFileChangesOperation>(
             fileName, indexing_data_, interruptRequest_ );
-
-        return connectSignalsAndRun( operationRequested.get() );
-    } ) );
+        connectSignalsAndRun( operationRequested.get() );
+    } );
     operationStarted.acquire();
 }
 
 OperationResult LogDataWorker::connectSignalsAndRun( IndexOperation* operationRequested )
 {
+    // IndexOperation is a short-lived QObject created on the std::thread. Avoid
+    // queued metacalls targeting LogDataWorker from this transient sender.
+    // We connect directly but marshal actual LogDataWorker signal emission back
+    // onto the owner's thread to avoid cross-thread QObject signal/disconnect races.
     connect( operationRequested, &IndexOperation::indexingProgressed, this,
-             &LogDataWorker::indexingProgressed );
+             [ this ]( int percent ) { emitIndexingProgressedOnOwnerThread( percent ); },
+             Qt::DirectConnection );
 
     connect( operationRequested, &IndexOperation::indexingFinished, this,
-             &LogDataWorker::onIndexingFinished );
+             &LogDataWorker::onIndexingFinished, Qt::DirectConnection );
 
     connect( operationRequested, &IndexOperation::fileCheckFinished, this,
-             &LogDataWorker::onCheckFileFinished );
+             &LogDataWorker::onCheckFileFinished, Qt::DirectConnection );
 
     auto result = operationRequested->run();
-
-    operationRequested->disconnect( this );
 
     return result;
 }
@@ -293,22 +298,44 @@ void LogDataWorker::interrupt()
     interruptRequest_.set();
 }
 
+void LogDataWorker::waitForDone()
+{
+    if ( opThread_.joinable() ) {
+        opThread_.join();
+    }
+}
+
 void LogDataWorker::onIndexingFinished( bool result )
 {
     if ( result ) {
         LOG_INFO << "finished indexing in worker thread";
-        Q_EMIT indexingFinished( LoadingStatus::Successful );
+        emitIndexingFinishedOnOwnerThread( LoadingStatus::Successful );
     }
     else {
         LOG_INFO << "indexing interrupted in worker thread";
-        Q_EMIT indexingFinished( LoadingStatus::Interrupted );
+        emitIndexingFinishedOnOwnerThread( LoadingStatus::Interrupted );
     }
 }
 
 void LogDataWorker::onCheckFileFinished( const MonitoredFileStatus result )
 {
     LOG_INFO << "checking file finished in worker thread";
-    Q_EMIT checkFileChangesFinished( result );
+    emitCheckFileFinishedOnOwnerThread( result );
+}
+
+void LogDataWorker::emitIndexingProgressedOnOwnerThread( int percent )
+{
+    dispatchToObject( [ this, percent ] { Q_EMIT indexingProgressed( percent ); }, this );
+}
+
+void LogDataWorker::emitIndexingFinishedOnOwnerThread( LoadingStatus status )
+{
+    dispatchToObject( [ this, status ] { Q_EMIT indexingFinished( status ); }, this );
+}
+
+void LogDataWorker::emitCheckFileFinishedOnOwnerThread( MonitoredFileStatus status )
+{
+    dispatchToObject( [ this, status ] { Q_EMIT checkFileChangesFinished( status ); }, this );
 }
 
 //

@@ -107,6 +107,19 @@ void OperationQueue::shutdown()
     LOG_INFO << "Operation queue shutdown";
 }
 
+void OperationQueue::waitForWorkerDone()
+{
+    LogDataWorker* worker = nullptr;
+    {
+        ScopedLock guard( mutex_ );
+        worker = worker_.get();
+    }
+
+    if ( worker ) {
+        worker->waitForDone();
+    }
+}
+
 void OperationQueue::tryStartPendingOperation()
 {
     if ( shuttingDown_ ) {

@@ -21,6 +21,7 @@
 #include <catch2/catch.hpp>
 
 #include <QApplication>
+#include <QDir>
 #include <QMetaType>
 #include <QtConcurrent>
 
@@ -32,6 +33,22 @@
 #include <logger.h>
 
 const bool PersistentInfo::ForcePortable = true;
+
+namespace {
+void configureTestTempDir()
+{
+    // Use the executable directory instead of the process working directory so
+    // direct runs and CTest runs use the same temp-file location.
+    const auto tempDir = QDir::cleanPath( QCoreApplication::applicationDirPath() + QDir::separator()
+                                          + QLatin1String( "test_tmp" ) );
+    QDir{}.mkpath( tempDir );
+
+    const auto tempDirUtf8 = QDir::toNativeSeparators( tempDir ).toUtf8();
+    qputenv( "TMP", tempDirUtf8 );
+    qputenv( "TEMP", tempDirUtf8 );
+    qputenv( "TMPDIR", tempDirUtf8 );
+}
+} // namespace
 
 class TestRunner : public QObject {
     Q_OBJECT
@@ -71,7 +88,8 @@ int main( int argc, char* argv[] )
 {
     QApplication a( argc, argv );
 
-    logging::enableLogging();
+    logging::enableLogging( true, logging::LogLevel::Warning );
+    configureTestTempDir();
 
     qRegisterMetaType<LinesCount>( "LinesCount" );
     qRegisterMetaType<LineNumber>( "LineNumber" );
@@ -82,6 +100,11 @@ int main( int argc, char* argv[] )
     config.setIndexReadBufferSizeMb( 1 );
     config.setUseSearchResultsCache( false );
     config.setConfirmTabClose( false );
+#ifdef Q_OS_WIN
+    // Windows builds can hit instability in the HS backend with the current
+    // Vectorscan toolchain; use the Qt engine for deterministic tests.
+    config.setRegexpEnging( RegexpEngine::QRegularExpression );
+#endif
     config.save();
 
     auto higthlighters = HighlighterSetCollection::getSynced();
@@ -93,7 +116,14 @@ int main( int argc, char* argv[] )
     config.setPollingEnabled( false );
 #endif
 
+    // Native file watching (efsw) is flaky in Windows CI/local test runs and can
+    // emit corrupted paths during rapid temp-file teardown. Keep polling enabled
+    // for file-change coverage, but disable native watcher for deterministic tests.
+#ifdef Q_OS_WIN
+    config.setNativeFileWatchEnabled( false );
+#else
     config.setNativeFileWatchEnabled( true );
+#endif
 
     QThreadPool::globalInstance()->reserveThread();
 

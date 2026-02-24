@@ -41,7 +41,9 @@
 
 #include <QObject>
 
-#include <qthreadpool.h>
+#include <atomic>
+#include <cstdint>
+#include <thread>
 
 #ifndef Q_MOC_RUN
 #include <roaring.hh>
@@ -206,6 +208,10 @@ public:
     // Interrupts the search if one is in progress
     void interrupt();
 
+    // Blocks until all in-flight search operations have completed.
+    // Must be called before any reader detach to prevent use-after-close.
+    void waitForDone();
+
     // get the current indexing data
     SearchResults getSearchResults() const;
 
@@ -218,17 +224,31 @@ Q_SIGNALS:
     void searchFinished();
 
 private:
-    void connectSignalsAndRun( SearchOperation* operationRequested );
+    using OperationGeneration = uint64_t;
+
+    void connectSignalsAndRun( SearchOperation* operationRequested, OperationGeneration generation );
+    void emitSearchProgressedOnOwnerThread( LinesCount nbMatches, int percent,
+                                            LineNumber initialLine,
+                                            OperationGeneration generation );
+    void emitSearchFinishedOnOwnerThread( OperationGeneration generation );
 
 private:
+    // sourceLogData_, interruptRequested_, operationsMutex_, and searchData_ must all
+    // outlive any running task (the task lambda captures them by reference).  opThread_
+    // is declared last so its destructor runs first; but more importantly the destructor
+    // body explicitly joins opThread_ before any other members are destroyed.
     const LogData& sourceLogData_;
     AtomicFlag interruptRequested_;
-
-    QThreadPool operationsPool_;
     Mutex operationsMutex_;
 
-    // Shared indexing data
+    // Shared indexing data (must outlive the task: passed by reference to SearchOperation::run)
     SearchData searchData_;
+
+    std::atomic<OperationGeneration> operationGeneration_{ 0 };
+
+    // Declared last so it is destroyed first.  The destructor body joins this thread
+    // before other members are destroyed, guaranteeing the task has fully exited.
+    std::thread opThread_;
 };
 
 #endif

@@ -19,11 +19,25 @@
 
 #include <catch2/catch.hpp>
 
+#include <QDir>
+#include <QFile>
 #include <QSettings>
 #include <QSignalSpy>
-#include <QTemporaryDir>
+#include <QUuid>
 
 #include "tabgroup.h"
+
+namespace {
+QString makeTestDir( const QString& prefix )
+{
+    const auto dirPath = QDir::cleanPath( QDir::currentPath() + QDir::separator()
+                                          + QLatin1String( "test_tmp" ) + QDir::separator()
+                                          + prefix + QLatin1Char( '_' )
+                                          + QUuid::createUuid().toString( QUuid::WithoutBraces ) );
+    QDir{}.mkpath( dirPath );
+    return dirPath;
+}
+} // namespace
 
 TEST_CASE( "TabGroupManager removes an empty group when the last tab is removed" )
 {
@@ -61,10 +75,9 @@ TEST_CASE( "TabGroupManager moveTabToGroup with empty target removes group membe
 
 TEST_CASE( "TabGroupManager persists and restores groups with tabs and collapsed state" )
 {
-    QTemporaryDir temporaryDir;
-    REQUIRE( temporaryDir.isValid() );
-
-    const auto settingsPath = temporaryDir.filePath( "tabgroup.ini" );
+    const auto dirPath = makeTestDir( "tabgroup" );
+    REQUIRE( QDir{ dirPath }.exists() );
+    const auto settingsPath = QDir{ dirPath }.filePath( "tabgroup.ini" );
 
     {
         QSettings settings( settingsPath, QSettings::IniFormat );
@@ -77,6 +90,7 @@ TEST_CASE( "TabGroupManager persists and restores groups with tabs and collapsed
 
         manager.saveToStorage( settings );
         settings.sync();
+        REQUIRE( settings.status() == QSettings::NoError );
     }
 
     QSettings restoredSettings( settingsPath, QSettings::IniFormat );

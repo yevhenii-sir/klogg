@@ -352,8 +352,8 @@ FileWatcher& FileWatcher::getFileWatcher()
 
 void FileWatcher::addFile( const QString& fileName )
 {
-    efswWatcher_->addFile( fileName );
     updateConfiguration();
+    efswWatcher_->addFile( fileName );
 }
 
 void FileWatcher::removeFile( const QString& fileName )

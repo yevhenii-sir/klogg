@@ -47,6 +47,7 @@
 #include <utility>
 #include <vector>
 
+#include <QCoreApplication>
 #include <QFileInfo>
 
 #ifdef __clang__
@@ -81,7 +82,8 @@ LogData::LogData()
 
     // Forward the update signal
     workerIndexingProgressConnection_
-        = connect( worker.get(), &LogDataWorker::indexingProgressed, this, &LogData::loadingProgressed );
+        = connect( worker.get(), &LogDataWorker::indexingProgressed, this,
+                   &LogData::loadingProgressed, Qt::QueuedConnection );
     workerIndexingFinishedConnection_
         = connect( worker.get(), &LogDataWorker::indexingFinished, this, &LogData::indexingFinished,
                    Qt::QueuedConnection );
@@ -107,12 +109,16 @@ LogData::LogData()
 LogData::~LogData()
 {
     LOG_DEBUG << "Destroying log data";
+    shuttingDown_ = true;
     QObject::disconnect( fileWatcherConnection_ );
-    QObject::disconnect( workerIndexingProgressConnection_ );
-    QObject::disconnect( workerIndexingFinishedConnection_ );
-    QObject::disconnect( workerCheckFileChangesFinishedConnection_ );
-    QObject::disconnect( this, nullptr, nullptr, nullptr );
+
+    // Stop worker activity so no more queued worker callbacks are produced while
+    // this QObject is tearing down.
     operationQueue_.shutdown();
+
+    // A queued file-changed or worker callback may already be posted for this
+    // object. Purge them before this instance is destroyed.
+    QCoreApplication::removePostedEvents( this );
 }
 
 void LogData::setPrefilter( const QString& prefilterPattern )
@@ -170,6 +176,10 @@ void LogData::reload( QTextCodec* forcedEncoding )
 
 void LogData::fileChangedOnDisk( const QString& filename )
 {
+    if ( shuttingDown_ || !attached_file_ ) {
+        return;
+    }
+
     LOG_INFO << "signalFileChanged " << filename << ", indexed file " << indexingFileName_;
 
     QFileInfo info( indexingFileName_ );
@@ -214,6 +224,15 @@ void LogData::fileChangedOnDisk( const QString& filename )
 
 void LogData::indexingFinished( LoadingStatus status )
 {
+    if ( shuttingDown_ || !attached_file_ ) {
+        return;
+    }
+
+    // The queued completion signal can arrive before the worker std::thread has
+    // fully exited. Join first so temp-file tests and reader detach do not race
+    // with the tail of the indexing operation on slower/x86 builds.
+    operationQueue_.waitForWorkerDone();
+
     attached_file_->detachReader();
 
     LOG_INFO << "indexingFinished for: " << indexingFileName_
@@ -240,6 +259,14 @@ void LogData::indexingFinished( LoadingStatus status )
 
 void LogData::checkFileChangesFinished( MonitoredFileStatus status )
 {
+    if ( shuttingDown_ || !attached_file_ ) {
+        return;
+    }
+
+    // Ensure the worker operation has fully returned before detaching the
+    // reader or scheduling follow-up operations.
+    operationQueue_.waitForWorkerDone();
+
     attached_file_->detachReader();
 
     LOG_INFO << "File " << indexingFileName_ << " status " << static_cast<uint8_t>( status );

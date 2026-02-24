@@ -154,6 +154,9 @@ class LogFilteredData : public AbstractLogData {
     void handleSearchProgressedThrottled();
 
   private:
+    void attachReaderIfNeeded() const;
+    void detachReaderIfNeeded() const;
+
     // Implementation of virtual functions
     QString doGetLineString( LineNumber line ) const override;
     QString doGetExpandedLineString( LineNumber line ) const override;
@@ -214,6 +217,8 @@ class LogFilteredData : public AbstractLogData {
     KDToolBox::KDSignalThrottler searchProgressThrottler_;
 
     LogFilteredDataWorker workerThread_;
+    mutable bool readerAttached_{ false };
+    mutable bool shuttingDown_{ false };
 
   private:
     struct CachedSearchResult {

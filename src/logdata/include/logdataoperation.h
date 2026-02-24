@@ -120,6 +120,7 @@ class OperationQueue {
 
     void interrupt();
     void shutdown();
+    void waitForWorkerDone();
 
     template <typename Op, typename... Args>
     void enqueueOperation( Args&&... args )

@@ -1,8 +1,12 @@
 #ifndef TEST_UTILS_H
 #define TEST_UTILS_H
 
-#include <string>
 #include <chrono>
+#include <memory>
+#include <string>
+
+#include <QSignalSpy>
+#include <QTest>
 /*
 struct TestTimer {
     TestTimer()
@@ -29,11 +33,64 @@ struct TestTimer {
     std::string text_;
 };
 */
-class SafeQSignalSpy : public QSignalSpy {
+class SafeQSignalSpy {
   public:
     template <typename... Args>
     SafeQSignalSpy( Args&&... agruments )
-        : QSignalSpy( std::forward<Args>(agruments)... ) {}
+        : spy_( std::make_unique<QSignalSpy>( std::forward<Args>( agruments )... ) )
+    {
+    }
+
+    ~SafeQSignalSpy()
+    {
+        if ( !spy_ ) {
+            return;
+        }
+#ifdef Q_OS_WIN
+        // QSignalSpy teardown can crash in Windows CI/local runs when the sender is
+        // being destroyed concurrently during test unwinding. The processes are
+        // short-lived; leaking the spy object avoids the flaky destructor path.
+        (void)spy_.release();
+#endif
+    }
+
+    SafeQSignalSpy( const SafeQSignalSpy& ) = delete;
+    SafeQSignalSpy& operator=( const SafeQSignalSpy& ) = delete;
+
+    SafeQSignalSpy( SafeQSignalSpy&& ) = delete;
+    SafeQSignalSpy& operator=( SafeQSignalSpy&& ) = delete;
+
+    int count() const
+    {
+        return spy_ ? spy_->count() : 0;
+    }
+
+    bool wait( int timeout = 5000 )
+    {
+        return spy_ && spy_->wait( timeout );
+    }
+
+    QList<QVariant> at( int i ) const
+    {
+        return spy_ ? spy_->at( i ) : QList<QVariant>{};
+    }
+
+    QList<QVariant> takeFirst()
+    {
+        return spy_ ? spy_->takeFirst() : QList<QVariant>{};
+    }
+
+    void clear()
+    {
+        if ( spy_ ) {
+            spy_->clear();
+        }
+    }
+
+    bool isValid() const
+    {
+        return spy_ && spy_->isValid();
+    }
 
     bool safeWait( int timeout = 10000 ) {
         // If it has already been received
@@ -43,6 +100,9 @@ class SafeQSignalSpy : public QSignalSpy {
         }
         return result;
     }
+
+  private:
+    std::unique_ptr<QSignalSpy> spy_;
 };
 
 template<typename F>

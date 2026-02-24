@@ -132,9 +132,29 @@ RegularExpression::RegularExpression( const RegularExpressionPattern& pattern )
             expression_ = QString::fromStdString( subPatterns_.front().id() );
         }
 
-        hsExpression_ = HsRegularExpression( subPatterns_ );
-        isValid_ = hsExpression_.isValid();
-        errorString_ = hsExpression_.errorString();
+        // Only compile patterns with Vectorscan when the Hyperscan engine is configured.
+        // On Windows (MSVC + AVX2), Vectorscan pattern compilation can corrupt the heap
+        // even when the resulting matcher is later discarded in PatternMatcher — the
+        // config check there comes too late.  Leave hsExpression_ default-constructed
+        // (database_ = null → createMatcher() falls back to DefaultRegularExpressionMatcher)
+        // and validate patterns via QRegularExpression instead.
+        const auto& config = Configuration::get();
+        if ( config.regexpEngine() == RegexpEngine::Hyperscan ) {
+            hsExpression_ = HsRegularExpression( subPatterns_ );
+            isValid_ = hsExpression_.isValid();
+            errorString_ = hsExpression_.errorString();
+        }
+        else {
+            for ( const auto& subPattern : subPatterns_ ) {
+                const auto regex = static_cast<QRegularExpression>( subPattern );
+                if ( !regex.isValid() ) {
+                    isValid_ = false;
+                    errorString_ = regex.errorString();
+                    return;
+                }
+            }
+            isValid_ = true;
+        }
 
     } catch ( std::exception& err ) {
         isValid_ = false;
@@ -226,9 +246,23 @@ MultiRegularExpression::MultiRegularExpression(
     : patterns_( patterns )
 {
     try {
-        hsExpression_ = HsRegularExpression( patterns_ );
-        isValid_ = hsExpression_.isValid();
-        errorString_ = hsExpression_.errorString();
+        const auto& config = Configuration::get();
+        if ( config.regexpEngine() == RegexpEngine::Hyperscan ) {
+            hsExpression_ = HsRegularExpression( patterns_ );
+            isValid_ = hsExpression_.isValid();
+            errorString_ = hsExpression_.errorString();
+        }
+        else {
+            for ( const auto& subPattern : patterns_ ) {
+                const auto regex = static_cast<QRegularExpression>( subPattern );
+                if ( !regex.isValid() ) {
+                    isValid_ = false;
+                    errorString_ = regex.errorString();
+                    return;
+                }
+            }
+            isValid_ = true;
+        }
 
     } catch ( std::exception& err ) {
         isValid_ = false;
@@ -245,6 +279,10 @@ MultiPatternMatcher::MultiPatternMatcher( const MultiRegularExpression& expressi
     : matcher_( expression.hsExpression_.createMatcher() )
     , patterns_( expression.patterns_ )
 {
+    const auto& config = Configuration::get();
+    if ( config.regexpEngine() != RegexpEngine::Hyperscan ) {
+        matcher_ = DefaultRegularExpressionMatcher( expression.patterns_ );
+    }
 }
 
 MultiPatternMatcher::~MultiPatternMatcher() = default;

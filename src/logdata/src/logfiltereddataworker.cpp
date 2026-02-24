@@ -38,6 +38,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <exception>
 #include <qsemaphore.h>
 #include <utility>
@@ -52,7 +53,6 @@
 #include "linetypes.h"
 #include "log.h"
 #include "progress.h"
-#include "runnable_lambda.h"
 
 #include "logdata.h"
 #include "regularexpression.h"
@@ -174,48 +174,63 @@ void SearchData::clear()
 LogFilteredDataWorker::LogFilteredDataWorker( const LogData& sourceLogData )
     : sourceLogData_( sourceLogData )
 {
-    operationsPool_.setMaxThreadCount( 1 );
 }
 
 LogFilteredDataWorker::~LogFilteredDataWorker() noexcept
 {
-    try {
-        interruptRequested_.set();
-        operationsPool_.clear();
-        operationsPool_.waitForDone();
-        LOG_INFO << "LogFilteredDataWorker shutdown";
-    } catch ( const std::exception& e ) {
-        LOG_ERROR << "Failed to destroy LogFilteredDataWorker: " << e.what();
+    // Signal any running task to stop, then wait for the thread to fully exit
+    // before any other members are destroyed.  std::thread::join() guarantees
+    // the OS thread has completely exited — no race with internal Qt thread-pool
+    // cleanup (QMutex::lock / QThread::isRunning crashes seen in Qt 5.15/6.9).
+    interruptRequested_.set();
+    if ( opThread_.joinable() ) {
+        opThread_.join();
     }
 }
 
-void LogFilteredDataWorker::connectSignalsAndRun( SearchOperation* operationRequested )
+void LogFilteredDataWorker::connectSignalsAndRun( SearchOperation* operationRequested,
+                                                  OperationGeneration generation )
 {
+    // SearchOperation is a short-lived QObject created on the std::thread. Using
+    // a queued signal-to-signal hop into this worker can leave queued metacalls
+    // targeting a connection object that gets torn down with the sender. Forward
+    // directly here, but marshal actual LogFilteredDataWorker signal emission
+    // back onto the owner's thread to avoid cross-thread QObject signal/disconnect
+    // races during teardown.
     connect( operationRequested, &SearchOperation::searchProgressed, this,
-             &LogFilteredDataWorker::searchProgressed );
+             [ this, generation ]( LinesCount nbMatches, int percent, LineNumber initialLine ) {
+                 emitSearchProgressedOnOwnerThread( nbMatches, percent, initialLine, generation );
+             },
+             Qt::DirectConnection );
     connect( operationRequested, &SearchOperation::searchFinished, this,
-             &LogFilteredDataWorker::searchFinished, Qt::QueuedConnection );
+             [ this, generation ] { emitSearchFinishedOnOwnerThread( generation ); },
+             Qt::DirectConnection );
 
     operationRequested->run( searchData_ );
-    operationRequested->disconnect( this );
 }
 
 void LogFilteredDataWorker::search( const RegularExpressionPattern& regExp, LineNumber startLine,
                                     LineNumber endLine )
 {
     ScopedLock locker( operationsMutex_ ); // to protect operationRequested_
-    operationsPool_.waitForDone();
+    // ScopedLock blocks until the previous task releases operationsMutex_, so by
+    // the time we get here the previous task function has returned.  join() then
+    // waits for the OS thread to fully exit before we start a new one.
+    if ( opThread_.joinable() ) {
+        opThread_.join();
+    }
     interruptRequested_.clear();
+    const auto generation = operationGeneration_.fetch_add( 1 ) + 1;
 
     LOG_INFO << "Search requested";
     QSemaphore operationStarted;
-    operationsPool_.start( createRunnable( [ this, &operationStarted, regExp, startLine, endLine ] {
+    opThread_ = std::thread( [ this, &operationStarted, regExp, startLine, endLine, generation ] {
         operationStarted.release();
         ScopedLock operationLock( operationsMutex_ );
         auto operationRequested = std::make_unique<FullSearchOperation>(
             sourceLogData_, interruptRequested_, regExp, startLine, endLine );
-        connectSignalsAndRun( operationRequested.get() );
-    } ) );
+        connectSignalsAndRun( operationRequested.get(), generation );
+    } );
     operationStarted.acquire();
 }
 
@@ -224,20 +239,23 @@ void LogFilteredDataWorker::updateSearch( const RegularExpressionPattern& regExp
                                           LineNumber position )
 {
     ScopedLock locker( operationsMutex_ ); // to protect operationRequested_
-    operationsPool_.waitForDone();
+    if ( opThread_.joinable() ) {
+        opThread_.join();
+    }
     interruptRequested_.clear();
+    const auto generation = operationGeneration_.fetch_add( 1 ) + 1;
 
     LOG_INFO << "Search update requested from " << position.get();
 
     QSemaphore operationStarted;
-    operationsPool_.start(
-        createRunnable( [ this, &operationStarted, regExp, startLine, endLine, position ] {
-            operationStarted.release();
-            ScopedLock operationLock( operationsMutex_ );
-            auto operationRequested = std::make_unique<UpdateSearchOperation>(
-                sourceLogData_, interruptRequested_, regExp, startLine, endLine, position );
-            connectSignalsAndRun( operationRequested.get() );
-        } ) );
+    opThread_ = std::thread( [ this, &operationStarted, regExp, startLine, endLine, position,
+                               generation ] {
+        operationStarted.release();
+        ScopedLock operationLock( operationsMutex_ );
+        auto operationRequested = std::make_unique<UpdateSearchOperation>(
+            sourceLogData_, interruptRequested_, regExp, startLine, endLine, position );
+        connectSignalsAndRun( operationRequested.get(), generation );
+    } );
 
     operationStarted.acquire();
 }
@@ -246,6 +264,47 @@ void LogFilteredDataWorker::interrupt()
 {
     LOG_INFO << "Search interruption requested";
     interruptRequested_.set();
+}
+
+void LogFilteredDataWorker::waitForDone()
+{
+    if ( opThread_.joinable() ) {
+        opThread_.join();
+    }
+}
+
+void LogFilteredDataWorker::emitSearchProgressedOnOwnerThread( LinesCount nbMatches, int percent,
+                                                               LineNumber initialLine,
+                                                               OperationGeneration generation )
+{
+    dispatchToObject(
+        [ this, nbMatches, percent, initialLine, generation ] {
+            if ( generation != operationGeneration_.load() ) {
+                return;
+            }
+
+            if ( percent == 100 ) {
+                // Ensure terminal progress is delivered after the corresponding
+                // worker std::thread has fully exited, but avoid joining a newer
+                // search when this callback is delayed in the event queue.
+                waitForDone();
+            }
+
+            Q_EMIT searchProgressed( nbMatches, percent, initialLine );
+        },
+        this );
+}
+
+void LogFilteredDataWorker::emitSearchFinishedOnOwnerThread( OperationGeneration generation )
+{
+    dispatchToObject(
+        [ this, generation ] {
+            if ( generation != operationGeneration_.load() ) {
+                return;
+            }
+            Q_EMIT searchFinished();
+        },
+        this );
 }
 
 // This will do an atomic copy of the object
@@ -292,6 +351,108 @@ void SearchOperation::doSearch( SearchData& searchData, LineNumber initialLine )
 
     LOG_INFO << "Using " << matchingThreadsCount << " matching threads";
 
+    // Avoid the TBB flow-graph path for the single-threaded case. It adds
+    // unnecessary teardown complexity and has been a source of intermittent
+    // crashes in tests during node destruction, while a straightforward loop is
+    // simpler and deterministic.
+    if ( matchingThreadsCount == 1 ) {
+        if ( initialLine < startLine_ ) {
+            initialLine = startLine_;
+        }
+
+        const auto endLine = qMin( LineNumber( nbSourceLines.get() ), endLine_ );
+        const auto nbLinesInChunk = LinesCount(
+            static_cast<LinesCount::UnderlyingType>( config.searchReadBufferSizeLines() ) );
+
+        std::chrono::microseconds fileReadingDuration{ 0 };
+        std::chrono::microseconds matchCombiningDuration{ 0 };
+        std::chrono::microseconds matchDuration{ 0 };
+
+        const auto totalLines = endLine - initialLine;
+        LinesCount totalProcessedLines = 0_lcount;
+        LineLength maxLength = 0_length;
+        LinesCount nbMatches = searchData.getNbMatches();
+        auto reportedMatches = nbMatches;
+        int reportedPercentage = 0;
+
+        RegularExpression regularExpression{ regexp_ };
+        auto matcher = regularExpression.createMatcher();
+
+        auto chunkStart = initialLine;
+        while ( chunkStart < endLine && !interruptRequested_ ) {
+            const auto lineSourceStartTime = high_resolution_clock::now();
+            LOG_DEBUG << "Reading chunk starting at " << chunkStart;
+
+            const auto linesInChunk
+                = LinesCount( qMin( nbLinesInChunk.get(), ( endLine - chunkStart ).get() ) );
+            auto lines = sourceLogData_.getLinesRaw( chunkStart, linesInChunk );
+
+            const auto lineSourceEndTime = high_resolution_clock::now();
+            fileReadingDuration += duration_cast<microseconds>( lineSourceEndTime
+                                                                - lineSourceStartTime );
+
+            auto matchStartTime = high_resolution_clock::now();
+            auto searchResults = filterLines( *matcher, lines, chunkStart );
+            auto matchEndTime = high_resolution_clock::now();
+            matchDuration += duration_cast<microseconds>( matchEndTime - matchStartTime );
+
+            const auto matchProcessorStartTime = high_resolution_clock::now();
+            if ( searchResults.processedLines.get() ) {
+                maxLength = qMax( maxLength, searchResults.maxLength );
+                const auto matchesCount = LinesCount( searchResults.matchingLines.cardinality() );
+                nbMatches += matchesCount;
+
+                const auto processedLines = LinesCount{ searchResults.chunkStart.get()
+                                                        + searchResults.processedLines.get() };
+                totalProcessedLines += searchResults.processedLines;
+
+                searchData.addAll( maxLength, searchResults.matchingLines, matchesCount,
+                                   processedLines );
+
+                LOG_DEBUG << "done Searching chunk starting at " << searchResults.chunkStart
+                          << ", " << searchResults.processedLines << " lines read.";
+            }
+
+            const auto matchProcessorEndTime = high_resolution_clock::now();
+            matchCombiningDuration += duration_cast<microseconds>( matchProcessorEndTime
+                                                                   - matchProcessorStartTime );
+
+            const int percentage = calculateProgress( totalProcessedLines.get(), totalLines.get() );
+            if ( percentage > reportedPercentage || nbMatches > reportedMatches ) {
+                Q_EMIT searchProgressed( nbMatches, std::min( 99, percentage ), initialLine );
+                reportedPercentage = percentage;
+                reportedMatches = nbMatches;
+            }
+
+            chunkStart = chunkStart + nbLinesInChunk;
+        }
+
+        const auto t2 = high_resolution_clock::now();
+        const auto durationUs = duration_cast<microseconds>( t2 - t1 );
+        const auto durationMs = duration_cast<milliseconds>( t2 - t1 );
+
+        LOG_INFO << "Searching done, overall duration " << durationUs;
+        LOG_INFO << "Line reading took " << fileReadingDuration;
+        LOG_INFO << "Results combining took " << matchCombiningDuration;
+        LOG_INFO << "Matching took " << matchDuration;
+
+        const auto totalFileSize = sourceLogData_.getFileSize();
+        LOG_INFO << "Searching perf "
+                 << static_cast<uint64_t>(
+                        std::floor( 1000.f * static_cast<float>( ( endLine - initialLine ).get() )
+                                    / static_cast<float>( durationMs.count() ) ) )
+                 << " lines/s";
+        LOG_INFO << "Searching io perf "
+                 << ( 1000.f * static_cast<float>( totalFileSize )
+                      / static_cast<float>( durationMs.count() ) )
+                        / ( 1024 * 1024 )
+                 << " MiB/s";
+
+        Q_EMIT searchProgressed( nbMatches, 100, initialLine );
+        Q_EMIT searchFinished();
+        return;
+    }
+
     tbb::flow::graph searchGraph;
 
     if ( initialLine < startLine_ ) {
@@ -314,44 +475,59 @@ void SearchOperation::doSearch( SearchData& searchData, LineNumber initialLine )
         = tbb::flow::function_node<BlockDataType, BlockDataType, tbb::flow::rejecting>;
 
     using PatternMatcherPtr = std::unique_ptr<PatternMatcher>;
-    using MatcherContext = std::tuple<PatternMatcherPtr, microseconds, RegexMatcherNode>;
 
-    klogg::vector<MatcherContext> regexMatchers;
-    regexMatchers.reserve( matchingThreadsCount );
+    // tbb::flow::function_node has a copy constructor but no move constructor.
+    // Storing it directly in a vector via emplace_back would copy-construct it from
+    // a temporary (which registers+deregisters with the graph), causing TBB internal
+    // node-list corruption when matchingThreadsCount >= 2.  Use unique_ptr so each
+    // node is constructed directly in-place on the heap — no copy, no move.
+    struct MatcherData {
+        PatternMatcherPtr matcher;
+        microseconds matchTime{};
+    };
+
+    klogg::vector<MatcherData> matcherData;
+    matcherData.reserve( matchingThreadsCount );
     RegularExpression regularExpression{ regexp_ };
     for ( auto index = 0u; index < matchingThreadsCount; ++index ) {
-        regexMatchers.emplace_back(
-            regularExpression.createMatcher(), microseconds{ 0 },
-            RegexMatcherNode(
-                searchGraph, 1, [ &regexMatchers, index, this ]( const BlockDataType& blockData ) {
-                    if ( interruptRequested_ ) {
-                        LOG_INFO << "Matcher " << index << " interrupted";
-                        auto results = std::make_shared<PartialSearchResults>();
-                        blockData->searchResults.chunkStart = blockData->chunkStart;
-                        blockData->searchResults.processedLines
-                            = LinesCount{ blockData->lines.endOfLines.size() };
-                        return blockData;
-                    }
-
-                    const auto& matcher = std::get<PatternMatcherPtr>( regexMatchers.at( index ) );
-                    const auto matchStartTime = high_resolution_clock::now();
-
-                    blockData->searchResults
-                        = filterLines( *matcher, blockData->lines, blockData->chunkStart );
-
-                    const auto matchEndTime = high_resolution_clock::now();
-
-                    microseconds& matchDuration
-                        = std::get<microseconds>( regexMatchers.at( index ) );
-                    matchDuration += duration_cast<microseconds>( matchEndTime - matchStartTime );
-                    LOG_DEBUG << "Searcher " << index << " block " << blockData->chunkStart
-                              << " sending matches "
-                              << blockData->searchResults.matchingLines.cardinality();
-                    return blockData;
-                } ) );
+        matcherData.push_back( { regularExpression.createMatcher(), microseconds{ 0 } } );
     }
 
+    // resultsQueue must be declared BEFORE matcherNodes so that it is destroyed AFTER
+    // matcherNodes.  C++ destroys locals in reverse declaration order; each matcherNode
+    // deregisters itself from resultsQueue's predecessor list during destruction, so
+    // resultsQueue must still be alive when that happens.
     auto resultsQueue = tbb::flow::buffer_node<BlockDataType>( searchGraph );
+
+    std::vector<std::unique_ptr<RegexMatcherNode>> matcherNodes;
+    matcherNodes.reserve( matchingThreadsCount );
+    for ( auto index = 0u; index < matchingThreadsCount; ++index ) {
+        matcherNodes.push_back( std::make_unique<RegexMatcherNode>(
+            searchGraph, 1, [ &matcherData, index, this ]( const BlockDataType& blockData ) {
+                if ( interruptRequested_ ) {
+                    LOG_INFO << "Matcher " << index << " interrupted";
+                    blockData->searchResults.chunkStart = blockData->chunkStart;
+                    blockData->searchResults.processedLines
+                        = LinesCount{ blockData->lines.endOfLines.size() };
+                    return blockData;
+                }
+
+                const auto& matcher = *matcherData[ index ].matcher;
+                const auto matchStartTime = high_resolution_clock::now();
+
+                blockData->searchResults
+                    = filterLines( matcher, blockData->lines, blockData->chunkStart );
+
+                const auto matchEndTime = high_resolution_clock::now();
+
+                matcherData[ index ].matchTime
+                    += duration_cast<microseconds>( matchEndTime - matchStartTime );
+                LOG_DEBUG << "Searcher " << index << " block " << blockData->chunkStart
+                          << " sending matches "
+                          << blockData->searchResults.matchingLines.cardinality();
+                return blockData;
+            } ) );
+    }
 
     const auto totalLines = endLine - initialLine;
     LinesCount totalProcessedLines = 0_lcount;
@@ -417,9 +593,9 @@ void SearchOperation::doSearch( SearchData& searchData, LineNumber initialLine )
 
     tbb::flow::make_edge( blockPrefetcher, lineBlocksQueue );
 
-    for ( auto& regexMatcher : regexMatchers ) {
-        tbb::flow::make_edge( lineBlocksQueue, std::get<RegexMatcherNode>( regexMatcher ) );
-        tbb::flow::make_edge( std::get<RegexMatcherNode>( regexMatcher ), resultsQueue );
+    for ( auto& matcherNode : matcherNodes ) {
+        tbb::flow::make_edge( lineBlocksQueue, *matcherNode );
+        tbb::flow::make_edge( *matcherNode, resultsQueue );
     }
 
     tbb::flow::make_edge( resultsQueue, matchProcessor );
@@ -474,8 +650,8 @@ void SearchOperation::doSearch( SearchData& searchData, LineNumber initialLine )
     LOG_INFO << "Line reading took " << fileReadingDuration;
     LOG_INFO << "Results combining took " << matchCombiningDuration;
 
-    for ( const auto& regexMatcher : regexMatchers ) {
-        LOG_INFO << "Matching took " << std::get<microseconds>( regexMatcher );
+    for ( const auto& data : matcherData ) {
+        LOG_INFO << "Matching took " << data.matchTime;
     }
 
     const auto totalFileSize = sourceLogData_.getFileSize();

@@ -20,6 +20,7 @@
 #include "tabgroup.h"
 
 #include <QSettings>
+#include <QtGlobal>
 
 #include "log.h"
 
@@ -168,7 +169,19 @@ void TabGroupManager::retrieveFromStorage( QSettings& settings )
         group.name = settings.value( "name" ).toString();
         group.color = QColor( settings.value( "color", "#5B8CFF" ).toString() );
         group.collapsed = settings.value( "collapsed", false ).toBool();
-        group.tabPaths = settings.value( "tabPaths" ).toStringList();
+        const auto tabPathsValue = settings.value( "tabPaths" );
+        group.tabPaths = tabPathsValue.toStringList();
+        if ( group.tabPaths.isEmpty() ) {
+            const auto tabPathsText = settings.value( "tabPathsText" ).toString();
+            if ( !tabPathsText.isEmpty() ) {
+#if QT_VERSION < QT_VERSION_CHECK( 5, 14, 0 )
+                group.tabPaths =
+                    tabPathsText.split( QLatin1Char( '\n' ), QString::SkipEmptyParts );
+#else
+                group.tabPaths = tabPathsText.split( QLatin1Char( '\n' ), Qt::SkipEmptyParts );
+#endif
+            }
+        }
 
         if ( !group.id.isEmpty() && !group.name.isEmpty() && !group.tabPaths.isEmpty() ) {
             groups_.append( group );
@@ -181,6 +194,7 @@ void TabGroupManager::saveToStorage( QSettings& settings ) const
 {
     LOG_DEBUG << "TabGroupManager::saveToStorage";
 
+    settings.remove( "tabGroups" );
     settings.beginWriteArray( "tabGroups" );
     for ( int i = 0; i < groups_.size(); ++i ) {
         settings.setArrayIndex( i );
@@ -190,6 +204,7 @@ void TabGroupManager::saveToStorage( QSettings& settings ) const
         settings.setValue( "color", group.color.name( QColor::HexArgb ) );
         settings.setValue( "collapsed", group.collapsed );
         settings.setValue( "tabPaths", group.tabPaths );
+        settings.setValue( "tabPathsText", group.tabPaths.join( QLatin1Char( '\n' ) ) );
     }
     settings.endArray();
     settings.sync();

@@ -39,6 +39,18 @@
 #include "session.h"
 #include "sessioninfo.h"
 
+namespace {
+QString makeTestDir( const QString& prefix )
+{
+    const auto dirPath = QDir::cleanPath( QDir::currentPath() + QDir::separator()
+                                          + QLatin1String( "test_tmp" ) + QDir::separator()
+                                          + prefix + QLatin1Char( '_' )
+                                          + QUuid::createUuid().toString( QUuid::WithoutBraces ) );
+    QDir{}.mkpath( dirPath );
+    return dirPath;
+}
+} // namespace
+
 SCENARIO( "Main window tests", "[ui]" )
 {
     auto appSession = std::make_shared<Session>();
@@ -76,9 +88,9 @@ SCENARIO( "Main window tests", "[ui]" )
         auto tabArea = mainWindow->findChild<TabbedCrawlerWidget*>();
         REQUIRE( tabArea != nullptr );
 
-        QTemporaryDir tempDir;
-        REQUIRE( tempDir.isValid() );
-        const auto testFilePath = tempDir.filePath( "klogg.conf" );
+        const auto tempDirPath = makeTestDir( "mainwindow" );
+        REQUIRE( QDir{ tempDirPath }.exists() );
+        const auto testFilePath = QDir{ tempDirPath }.filePath( "klogg.conf" );
         {
             QFile testFile( testFilePath );
             REQUIRE( testFile.open( QIODevice::WriteOnly | QIODevice::Truncate ) );
@@ -168,10 +180,10 @@ SCENARIO( "Main window tests", "[ui]" )
 }
 
 // Helper: write raw bytes to a temp file and return its path
-static QString writeTestFile( const QTemporaryDir& dir, const QString& name,
+static QString writeTestFile( const QString& dirPath, const QString& name,
                               const QByteArray& content )
 {
-    const auto path = dir.filePath( name );
+    const auto path = QDir{ dirPath }.filePath( name );
     QFile f( path );
     REQUIRE( f.open( QIODevice::WriteOnly ) );
     f.write( content );
@@ -199,17 +211,17 @@ static QByteArray readMergedFile( Session& session, const std::vector<QString>& 
 SCENARIO( "Session::openMerged produces correct merged file", "[session][merge]" )
 {
     auto appSession = std::make_shared<Session>();
-    QTemporaryDir tempDir;
-    REQUIRE( tempDir.isValid() );
+    const auto tempDirPath = makeTestDir( "session_merge" );
+    REQUIRE( QDir{ tempDirPath }.exists() );
 
     GIVEN( "Two files that both end with newlines" )
     {
-        const auto file1 = writeTestFile( tempDir, "a.log", "line1\nline2\n" );
-        const auto file2 = writeTestFile( tempDir, "b.log", "line3\nline4\n" );
+        const auto file1 = writeTestFile( tempDirPath, "a.log", "line1\nline2\n" );
+        const auto file2 = writeTestFile( tempDirPath, "b.log", "line3\nline4\n" );
 
         WHEN( "They are merged" )
         {
-            const auto merged = readMergedFile( *appSession, { file1, file2 }, tempDir.path() );
+            const auto merged = readMergedFile( *appSession, { file1, file2 }, tempDirPath );
 
             THEN( "Content is concatenated without extra separator lines" )
             {
@@ -220,12 +232,12 @@ SCENARIO( "Session::openMerged produces correct merged file", "[session][merge]"
 
     GIVEN( "First file does not end with newline" )
     {
-        const auto file1 = writeTestFile( tempDir, "no_nl.log", "line1\nline2" );
-        const auto file2 = writeTestFile( tempDir, "with_nl.log", "line3\n" );
+        const auto file1 = writeTestFile( tempDirPath, "no_nl.log", "line1\nline2" );
+        const auto file2 = writeTestFile( tempDirPath, "with_nl.log", "line3\n" );
 
         WHEN( "They are merged" )
         {
-            const auto merged = readMergedFile( *appSession, { file1, file2 }, tempDir.path() );
+            const auto merged = readMergedFile( *appSession, { file1, file2 }, tempDirPath );
 
             THEN( "A newline is inserted between files" )
             {
@@ -236,12 +248,12 @@ SCENARIO( "Session::openMerged produces correct merged file", "[session][merge]"
 
     GIVEN( "Last file does not end with newline" )
     {
-        const auto file1 = writeTestFile( tempDir, "first.log", "line1\n" );
-        const auto file2 = writeTestFile( tempDir, "last.log", "line2" );
+        const auto file1 = writeTestFile( tempDirPath, "first.log", "line1\n" );
+        const auto file2 = writeTestFile( tempDirPath, "last.log", "line2" );
 
         WHEN( "They are merged" )
         {
-            const auto merged = readMergedFile( *appSession, { file1, file2 }, tempDir.path() );
+            const auto merged = readMergedFile( *appSession, { file1, file2 }, tempDirPath );
 
             THEN( "No trailing newline is appended to the last file" )
             {
@@ -255,12 +267,12 @@ SCENARIO( "Session::openMerged produces correct merged file", "[session][merge]"
         // Latin-1 bytes: 0xE9 = 'e with acute', 0xF1 = 'n with tilde'
         const QByteArray latin1Content = QByteArray( "caf\xe9\n", 5 );
         const QByteArray latin1Content2 = QByteArray( "ni\xf1o\n", 5 );
-        const auto file1 = writeTestFile( tempDir, "latin1_a.log", latin1Content );
-        const auto file2 = writeTestFile( tempDir, "latin1_b.log", latin1Content2 );
+        const auto file1 = writeTestFile( tempDirPath, "latin1_a.log", latin1Content );
+        const auto file2 = writeTestFile( tempDirPath, "latin1_b.log", latin1Content2 );
 
         WHEN( "They are merged" )
         {
-            const auto merged = readMergedFile( *appSession, { file1, file2 }, tempDir.path() );
+            const auto merged = readMergedFile( *appSession, { file1, file2 }, tempDirPath );
 
             THEN( "Raw bytes are preserved exactly" )
             {
@@ -273,12 +285,12 @@ SCENARIO( "Session::openMerged produces correct merged file", "[session][merge]"
     {
         const QByteArray binaryContent = QByteArray( "abc\x00\x01\x02\n", 7 );
         const QByteArray textContent = QByteArray( "text\n", 5 );
-        const auto file1 = writeTestFile( tempDir, "binary.log", binaryContent );
-        const auto file2 = writeTestFile( tempDir, "text.log", textContent );
+        const auto file1 = writeTestFile( tempDirPath, "binary.log", binaryContent );
+        const auto file2 = writeTestFile( tempDirPath, "text.log", textContent );
 
         WHEN( "They are merged" )
         {
-            const auto merged = readMergedFile( *appSession, { file1, file2 }, tempDir.path() );
+            const auto merged = readMergedFile( *appSession, { file1, file2 }, tempDirPath );
 
             THEN( "Binary bytes including nulls are preserved" )
             {
@@ -289,12 +301,12 @@ SCENARIO( "Session::openMerged produces correct merged file", "[session][merge]"
 
     GIVEN( "An empty file merged with a non-empty file" )
     {
-        const auto file1 = writeTestFile( tempDir, "empty.log", QByteArray() );
-        const auto file2 = writeTestFile( tempDir, "nonempty.log", "content\n" );
+        const auto file1 = writeTestFile( tempDirPath, "empty.log", QByteArray() );
+        const auto file2 = writeTestFile( tempDirPath, "nonempty.log", "content\n" );
 
         WHEN( "They are merged" )
         {
-            const auto merged = readMergedFile( *appSession, { file1, file2 }, tempDir.path() );
+            const auto merged = readMergedFile( *appSession, { file1, file2 }, tempDirPath );
 
             THEN( "Only the non-empty content appears, no extra newlines" )
             {
@@ -305,14 +317,14 @@ SCENARIO( "Session::openMerged produces correct merged file", "[session][merge]"
 
     GIVEN( "Three files with mixed newline endings" )
     {
-        const auto file1 = writeTestFile( tempDir, "f1.log", "a\n" );
-        const auto file2 = writeTestFile( tempDir, "f2.log", "b" );
-        const auto file3 = writeTestFile( tempDir, "f3.log", "c\n" );
+        const auto file1 = writeTestFile( tempDirPath, "f1.log", "a\n" );
+        const auto file2 = writeTestFile( tempDirPath, "f2.log", "b" );
+        const auto file3 = writeTestFile( tempDirPath, "f3.log", "c\n" );
 
         WHEN( "They are merged" )
         {
             const auto merged
-                = readMergedFile( *appSession, { file1, file2, file3 }, tempDir.path() );
+                = readMergedFile( *appSession, { file1, file2, file3 }, tempDirPath );
 
             THEN( "Separator newline added only between f2 and f3" )
             {
@@ -323,20 +335,20 @@ SCENARIO( "Session::openMerged produces correct merged file", "[session][merge]"
 
     GIVEN( "Merged file path is a valid file in tempDir" )
     {
-        const auto file1 = writeTestFile( tempDir, "p1.log", "hello\n" );
-        const auto file2 = writeTestFile( tempDir, "p2.log", "world\n" );
+        const auto file1 = writeTestFile( tempDirPath, "p1.log", "hello\n" );
+        const auto file2 = writeTestFile( tempDirPath, "p2.log", "world\n" );
 
         WHEN( "openMerged is called" )
         {
             auto* view = appSession->openMerged(
-                { file1, file2 }, []() { return new CrawlerWidget(); }, tempDir.path() );
+                { file1, file2 }, []() { return new CrawlerWidget(); }, tempDirPath );
             REQUIRE( view != nullptr );
 
             THEN( "getFilename returns a real file path inside tempDir" )
             {
                 const auto mergedPath = appSession->getFilename( view );
                 REQUIRE( QFileInfo::exists( mergedPath ) );
-                REQUIRE( mergedPath.startsWith( tempDir.path() ) );
+                REQUIRE( mergedPath.startsWith( tempDirPath ) );
                 REQUIRE( mergedPath.contains( "klogg_merged_" ) );
             }
 
@@ -390,9 +402,9 @@ SCENARIO( "MainWindow close keeps persisted open files for session restore", "[u
     auto tabArea = mainWindow->findChild<TabbedCrawlerWidget*>();
     REQUIRE( tabArea != nullptr );
 
-    QTemporaryDir tempDir;
-    REQUIRE( tempDir.isValid() );
-    const auto testFilePath = tempDir.filePath( "restore.log" );
+    const auto tempDirPath = makeTestDir( "restore_session" );
+    REQUIRE( QDir{ tempDirPath }.exists() );
+    const auto testFilePath = QDir{ tempDirPath }.filePath( "restore.log" );
     {
         QFile testFile( testFilePath );
         REQUIRE( testFile.open( QIODevice::WriteOnly | QIODevice::Truncate ) );

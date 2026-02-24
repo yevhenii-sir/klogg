@@ -71,8 +71,10 @@ Section "klogg" klogg
 
     SetOutPath $INSTDIR
     File release\klogg.exe
+!if ${PLATFORM} == "x64"
     File release\klogg_crashpad_handler.exe
     File release\klogg_minidump_dump.exe
+!endif
     File release\tbb12.dll
 
     File COPYING

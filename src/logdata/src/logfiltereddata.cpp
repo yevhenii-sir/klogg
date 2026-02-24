@@ -43,6 +43,7 @@
 #include "log.h"
 
 #include <KDSignalThrottler.h>
+#include <QCoreApplication>
 #include <QString>
 #include <QTimer>
 
@@ -80,27 +81,54 @@ LogFilteredData::LogFilteredData( const LogData* logData )
 
     // Forward the update signal
     connect( &workerThread_, &LogFilteredDataWorker::searchProgressed, this,
-             &LogFilteredData::handleSearchProgressed );
+             &LogFilteredData::handleSearchProgressed, Qt::QueuedConnection );
 
+#if !defined( Q_OS_WIN )
     searchProgressThrottler_.setTimeout( 100 );
     connect( this, &LogFilteredData::searchProgressedThrottled, &searchProgressThrottler_,
              &KDToolBox::KDGenericSignalThrottler::throttle );
 
     connect( &searchProgressThrottler_, &KDToolBox::KDGenericSignalThrottler::triggered, this,
              &LogFilteredData::handleSearchProgressedThrottled );
+#endif
 }
 
 LogFilteredData::~LogFilteredData()
 {
-    // Disconnect worker and throttler links first to prevent callbacks hitting
-    // a partially destroyed instance while shutdown is in progress.
+    shuttingDown_ = true;
+    searchProgressThrottler_.blockSignals( true );
+
+    // KDSignalThrottler owns an internal QTimer and its destructor calls
+    // maybeEmitTriggered().  On x86/Qt5 we can still hit a timeout/metacall race
+    // during teardown unless the internal timer is stopped/disconnected first.
+    if ( auto* throttlerTimer = searchProgressThrottler_.findChild<QTimer*>() ) {
+        throttlerTimer->stop();
+        throttlerTimer->blockSignals( true );
+        disconnect( throttlerTimer, nullptr, &searchProgressThrottler_, nullptr );
+    }
+
+    interruptSearch();
+    // Wait for any in-flight search operations to fully stop before
+    // detaching the file reader.  Without this, the worker thread can
+    // still be mid-read when the file handle is closed, causing
+    // STATUS_HEAP_CORRUPTION (0xC0000374) on Windows.
+    workerThread_.waitForDone();
+
+    workerThread_.blockSignals( true );
     disconnect( &workerThread_, nullptr, this, nullptr );
     disconnect( this, nullptr, &workerThread_, nullptr );
     disconnect( &searchProgressThrottler_, nullptr, this, nullptr );
     disconnect( this, nullptr, &searchProgressThrottler_, nullptr );
 
-    interruptSearch();
-    detachReader();
+    detachReaderIfNeeded();
+
+    // Queued MetaCall events can still be pending for this object or the helper
+    // QObjects even after disconnect(); remove them before subobject destruction.
+    QCoreApplication::removePostedEvents( &workerThread_ );
+    QCoreApplication::removePostedEvents( &searchProgressThrottler_ );
+    QCoreApplication::removePostedEvents( this );
+
+    sourceLogData_ = nullptr;
 }
 
 void LogFilteredData::runSearch( const RegularExpressionPattern& regExp )
@@ -138,7 +166,7 @@ void LogFilteredData::runSearch( const RegularExpressionPattern& regExp, LineNum
     }
 
     if ( shouldRunSearch ) {
-        attachReader();
+        attachReaderIfNeeded();
         workerThread_.search( currentRegExp_, startLine, endLine );
     }
 }
@@ -149,7 +177,7 @@ void LogFilteredData::updateSearch( LineNumber startLine, LineNumber endLine )
 
     currentSearchKey_ = {};
 
-    attachReader();
+    attachReaderIfNeeded();
     workerThread_.updateSearch( currentRegExp_, startLine, endLine,
                                 LineNumber( nbLinesProcessed_.get() ) );
 }
@@ -574,6 +602,10 @@ void LogFilteredData::updateSearchResultsCache()
 void LogFilteredData::handleSearchProgressed( LinesCount nbMatches, int progress,
                                               LineNumber initialLine )
 {
+    if ( shuttingDown_ ) {
+        return;
+    }
+
     assert( nbMatches >= 0_lcount );
 
     const auto searchResults = workerThread_.getSearchResults();
@@ -595,19 +627,35 @@ void LogFilteredData::handleSearchProgressed( LinesCount nbMatches, int progress
         searchProgress_ = std::make_tuple( nbMatches, progress, initialLine );
     }
 
-    Q_EMIT searchProgressedThrottled();
-
     if ( progress == 100 ) {
-        detachReader();
+        // Do not rely solely on the throttler timer for the terminal update: tests and
+        // shutdown paths need a deterministic completion signal even if the throttler
+        // event is delayed or dropped during teardown.
+        Q_EMIT searchProgressed( nbMatches, progress, initialLine );
+        detachReaderIfNeeded();
 
         LOG_INFO << "Matches size " << readableSize( matching_lines_.getSizeInBytes( false ) )
                  << ", marks size " << readableSize( marks_.getSizeInBytes( false ) )
                  << ", union size " << readableSize( marks_and_matches_.getSizeInBytes( false ) );
     }
+    else {
+#if defined( Q_OS_WIN )
+        // Windows test runs have hit repeated QObject/KDSignalThrottler teardown
+        // crashes after many create/search/destroy cycles. Emit progress directly
+        // instead of using the throttler on Windows.
+        Q_EMIT searchProgressed( nbMatches, progress, initialLine );
+#else
+        Q_EMIT searchProgressedThrottled();
+#endif
+    }
 }
 
 void LogFilteredData::handleSearchProgressedThrottled()
 {
+    if ( shuttingDown_ ) {
+        return;
+    }
+
     LinesCount nbMatches;
     int progress;
     LineNumber initialLine;
@@ -839,10 +887,31 @@ QTextCodec* LogFilteredData::doGetDisplayEncoding() const
 
 void LogFilteredData::doAttachReader() const
 {
-    sourceLogData_->attachReader();
+    attachReaderIfNeeded();
 }
 
 void LogFilteredData::doDetachReader() const
 {
+    detachReaderIfNeeded();
+}
+
+void LogFilteredData::attachReaderIfNeeded() const
+{
+    if ( shuttingDown_ || readerAttached_ || sourceLogData_ == nullptr ) {
+        return;
+    }
+
+    sourceLogData_->attachReader();
+    readerAttached_ = true;
+}
+
+void LogFilteredData::detachReaderIfNeeded() const
+{
+    if ( !readerAttached_ || sourceLogData_ == nullptr ) {
+        readerAttached_ = false;
+        return;
+    }
+
     sourceLogData_->detachReader();
+    readerAttached_ = false;
 }

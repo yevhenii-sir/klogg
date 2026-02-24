@@ -19,17 +19,30 @@
 
 #include <catch2/catch.hpp>
 
+#include <QDir>
+#include <QFile>
 #include <QSettings>
-#include <QTemporaryDir>
+#include <QUuid>
 
 #include "sessioninfo.h"
 
+namespace {
+QString makeTestDir( const QString& prefix )
+{
+    const auto dirPath = QDir::cleanPath( QDir::currentPath() + QDir::separator()
+                                          + QLatin1String( "test_tmp" ) + QDir::separator()
+                                          + prefix + QLatin1Char( '_' )
+                                          + QUuid::createUuid().toString( QUuid::WithoutBraces ) );
+    QDir{}.mkpath( dirPath );
+    return dirPath;
+}
+} // namespace
+
 TEST_CASE( "SessionInfo stores and restores current tab index and dirty shutdown flag" )
 {
-    QTemporaryDir temporaryDir;
-    REQUIRE( temporaryDir.isValid() );
-
-    const auto settingsPath = temporaryDir.filePath( "sessioninfo.ini" );
+    const auto dirPath = makeTestDir( "sessioninfo" );
+    REQUIRE( QDir{ dirPath }.exists() );
+    const auto settingsPath = QDir{ dirPath }.filePath( "sessioninfo.ini" );
     const auto geometry = QByteArray::fromHex( "6b6c6f6767" ); // "klogg"
 
     {
@@ -48,6 +61,7 @@ TEST_CASE( "SessionInfo stores and restores current tab index and dirty shutdown
 
         sessionInfo.saveToStorage( settings );
         settings.sync();
+        REQUIRE( settings.status() == QSettings::NoError );
     }
 
     QSettings restoredSettings( settingsPath, QSettings::IniFormat );
@@ -71,10 +85,9 @@ TEST_CASE( "SessionInfo stores and restores current tab index and dirty shutdown
 
 TEST_CASE( "SessionInfo can read legacy v1 session format without currentFileIndex" )
 {
-    QTemporaryDir temporaryDir;
-    REQUIRE( temporaryDir.isValid() );
-
-    const auto settingsPath = temporaryDir.filePath( "sessioninfo-v1.ini" );
+    const auto dirPath = makeTestDir( "sessioninfo_v1" );
+    REQUIRE( QDir{ dirPath }.exists() );
+    const auto settingsPath = QDir{ dirPath }.filePath( "sessioninfo-v1.ini" );
 
     {
         QSettings settings( settingsPath, QSettings::IniFormat );
@@ -97,6 +110,7 @@ TEST_CASE( "SessionInfo can read legacy v1 session format without currentFileInd
         settings.endArray();
         settings.endGroup();
         settings.sync();
+        REQUIRE( settings.status() == QSettings::NoError );
     }
 
     QSettings restoredSettings( settingsPath, QSettings::IniFormat );

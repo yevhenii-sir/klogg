@@ -21,6 +21,8 @@
 
 #include <iostream>
 
+#include <QCoreApplication>
+#include <QDir>
 #include <QProcess>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -39,6 +41,64 @@ static const qint64 SL_NB_LINES = 500LL;
 static const qint64 VBL_NB_LINES = 50000LL;
 
 namespace {
+
+QString makeTempFileTemplate( const QString& fileNameTemplate )
+{
+    const auto tempDir = QDir::cleanPath( QCoreApplication::applicationDirPath() + QDir::separator()
+                                          + QLatin1String( "test_tmp" ) );
+    QDir{}.mkpath( tempDir );
+    return QDir( tempDir ).filePath( fileNameTemplate );
+}
+
+bool writeFileInline( const QString& fileName, int numberOfLines, WriteFileModification flag )
+{
+    QFile file{ fileName };
+    const auto openedForWrite
+        = file.open( QIODevice::Unbuffered | QIODevice::WriteOnly | QIODevice::Append );
+    if ( !openedForWrite ) {
+        LOG_ERROR << "Inline write helper failed to open file for write "
+                  << file.errorString().toStdString();
+        return false;
+    }
+
+    if ( flag == WriteFileModification::Truncate ) {
+        file.resize( 0 );
+    }
+
+    if ( flag == WriteFileModification::StartWithPartialLineEnd ) {
+        file.write( partial_line_end, static_cast<qint64>( qstrlen( partial_line_end ) ) );
+    }
+
+    char newLine[ 90 ];
+    for ( int i = 0; i < numberOfLines; ++i ) {
+        snprintf( newLine, 89,
+                  "LOGDATA is a part of glogg, we are going to test it thoroughly, this is "
+                  "line %06d\n",
+                  i );
+        file.write( newLine, static_cast<qint64>( qstrlen( newLine ) ) );
+
+        if ( flag == WriteFileModification::DelayClosingFile ) {
+            QThread::sleep( 2 );
+        }
+    }
+
+    if ( flag == WriteFileModification::EndWithPartialLineBegin ) {
+        file.write( partial_line_begin, static_cast<qint64>( qstrlen( partial_line_begin ) ) );
+    }
+
+    file.flush();
+    file.close();
+
+    const auto openedForRead
+        = file.open( QIODevice::Unbuffered | QIODevice::ReadOnly | QIODevice::Append );
+    if ( !openedForRead ) {
+        LOG_ERROR << "Inline write helper failed to reopen file for read "
+                  << file.errorString().toStdString();
+        return false;
+    }
+    file.close();
+    return true;
+}
 
 class WriteFileThread : public QThread {
     Q_OBJECT
@@ -61,6 +121,9 @@ class WriteFileThread : public QThread {
     {
         QString writeHelper = QCoreApplication::applicationDirPath() + QDir::separator()
                               + QLatin1String( "file_write_helper" );
+#ifdef Q_OS_WIN
+        writeHelper += QLatin1String( ".exe" );
+#endif
         QStringList arguments;
         arguments << file_->fileName() << QString::number( numberOfLines_ )
                   << QString::number( static_cast<uint8_t>( flag_ ) );
@@ -68,6 +131,12 @@ class WriteFileThread : public QThread {
         LOG_INFO << "Executing write helper " << writeHelper << " " << arguments;
         QProcess writeHelperProcess;
         writeHelperProcess.start( writeHelper, arguments );
+        if ( !writeHelperProcess.waitForStarted() ) {
+            LOG_WARNING << "Write helper failed to start, falling back to inline writer: "
+                        << writeHelperProcess.errorString().toStdString();
+            result_ = writeFileInline( file_->fileName(), numberOfLines_, flag_ ) ? 0 : -1;
+            return;
+        }
         writeHelperProcess.waitForFinished( -1 );
         result_ = writeHelperProcess.exitCode();
         LOG_INFO << "Write helper result " << result_ << ", exit status "
@@ -83,12 +152,13 @@ class WriteFileThread : public QThread {
 };
 
 #ifdef _WIN32
-void writeDataToFileBackground( QFile& file, int numberOfLines = 200,
-                                WriteFileModification flag = WriteFileModification::None )
+WriteFileThread* writeDataToFileBackground( QFile& file, int numberOfLines = 200,
+                                            WriteFileModification flag
+                                            = WriteFileModification::None )
 {
     auto thread = new WriteFileThread( &file, numberOfLines, flag );
     thread->start();
-    QObject::connect( thread, &WriteFileThread::finished, thread, &WriteFileThread::deleteLater );
+    return thread;
 }
 #endif
 void writeDataToFile( QFile& file, int numberOfLines = 200,
@@ -104,7 +174,7 @@ void writeDataToFile( QFile& file, int numberOfLines = 200,
 
 TEST_CASE( "Logdata decoding lines", "[logdata]" )
 {
-    QTemporaryFile file{ "testdecode_XXXXXX" };
+    QTemporaryFile file{ makeTempFileTemplate( QLatin1String( "testdecode_XXXXXX" ) ) };
     if ( file.open() ) {
         writeDataToFile( file );
     }
@@ -139,12 +209,15 @@ TEST_CASE( "Logdata reading changing file", "[logdata]" )
     SafeQSignalSpy changedSpy( &logData, SIGNAL( fileChanged( MonitoredFileStatus ) ) );
 
     // Generate a small file
-    QTemporaryFile file{ "testdecode_XXXXXX" };
+    QTemporaryFile file{ makeTempFileTemplate( QLatin1String( "testdecode_XXXXXX" ) ) };
     if ( file.open() ) {
         writeDataToFile( file );
     }
 
     SafeQSignalSpy finishedSpy( &logData, SIGNAL( loadingFinished( LoadingStatus ) ) );
+#ifdef Q_OS_WIN
+    WriteFileThread* backgroundWriteThread = nullptr;
+#endif
     // Start loading it
     logData.attachFile( QFileInfo{ file }.absoluteFilePath() );
     waitUiState( [ &logData ] { return logData.getNbLine() == 200_lcount; } );
@@ -160,13 +233,21 @@ TEST_CASE( "Logdata reading changing file", "[logdata]" )
     if ( file.isOpen() ) {
         // To test the edge case when the final line is not complete
 #ifdef Q_OS_WIN
-        writeDataToFileBackground( file, 200, WriteFileModification::EndWithPartialLineBegin );
+        backgroundWriteThread
+            = writeDataToFileBackground( file, 200, WriteFileModification::EndWithPartialLineBegin );
 #else
         writeDataToFile( file, 200, WriteFileModification::EndWithPartialLineBegin );
 #endif
     }
 
     waitUiState( [ &logData ] { return logData.getNbLine() == 401_lcount; } );
+#ifdef Q_OS_WIN
+    REQUIRE( backgroundWriteThread != nullptr );
+    backgroundWriteThread->wait();
+    REQUIRE( backgroundWriteThread->isSucceeded() );
+    delete backgroundWriteThread;
+    backgroundWriteThread = nullptr;
+#endif
 
     // Check we have a bigger file
     REQUIRE( changedSpy.count() >= 1 );
@@ -179,13 +260,21 @@ TEST_CASE( "Logdata reading changing file", "[logdata]" )
         // Add a couple more lines, including the end of the unfinished one.
         if ( file.isOpen() ) {
 #ifdef Q_OS_WIN
-            writeDataToFileBackground( file, 20, WriteFileModification::StartWithPartialLineEnd );
+            backgroundWriteThread = writeDataToFileBackground(
+                file, 20, WriteFileModification::StartWithPartialLineEnd );
 #else
             writeDataToFile( file, 20, WriteFileModification::StartWithPartialLineEnd );
 #endif
         }
 
         waitUiState( [ &logData ] { return logData.getNbLine() == 421_lcount; } );
+#ifdef Q_OS_WIN
+        REQUIRE( backgroundWriteThread != nullptr );
+        backgroundWriteThread->wait();
+        REQUIRE( backgroundWriteThread->isSucceeded() );
+        delete backgroundWriteThread;
+        backgroundWriteThread = nullptr;
+#endif
 
         // Check we have a bigger file
         REQUIRE( changedSpy.count() >= 2 );
@@ -216,8 +305,10 @@ SCENARIO( "Attaching log data to files", "[logdata]" )
     GIVEN( "Small and big files" )
     {
 
-        QTemporaryFile smallFile{ "logdata_test_small_XXXXXX" };
-        QTemporaryFile bigFile{ "logdata_test_big_XXXXXX" };
+        QTemporaryFile smallFile{
+            makeTempFileTemplate( QLatin1String( "logdata_test_small_XXXXXX" ) ) };
+        QTemporaryFile bigFile{
+            makeTempFileTemplate( QLatin1String( "logdata_test_big_XXXXXX" ) ) };
 
         if ( smallFile.open() ) {
             writeDataToFile( smallFile, SL_NB_LINES );

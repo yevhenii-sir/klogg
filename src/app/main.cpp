@@ -70,21 +70,6 @@ const bool PersistentInfo::ForcePortable = true;
 const bool PersistentInfo::ForcePortable = false;
 #endif
 
-namespace {
-bool hasCommandLineOption( int argc, char* argv[], const char* shortOption,
-                           const char* longOption )
-{
-    for ( int i = 1; i < argc; ++i ) {
-        const auto argument = QString::fromLocal8Bit( argv[ i ] );
-        if ( argument == shortOption || argument == longOption ) {
-            return true;
-        }
-    }
-
-    return false;
-}
-} // namespace
-
 void setApplicationAttributes( bool enableQtHdpi, int scaleFactorRounding )
 {
     // When QNetworkAccessManager is instantiated it regularly starts polling
@@ -134,20 +119,6 @@ int main( int argc, char* argv[] )
 #ifdef KLOGG_USE_MIMALLOC
     mi_process_init();
 #endif
-
-    const auto hasHelpOption = hasCommandLineOption( argc, argv, "-h", "--help" );
-    const auto hasVersionOption = hasCommandLineOption( argc, argv, "-v", "--version" );
-
-    if ( hasHelpOption || hasVersionOption ) {
-        int exitCode = EXIT_SUCCESS;
-        const QStringList earlyArgs = { QString::fromLocal8Bit( argv[ 0 ] ),
-                                        hasHelpOption ? QStringLiteral( "--help" )
-                                                      : QStringLiteral( "--version" ) };
-        CliParameters earlyParameters(
-            earlyArgs, false, [ &exitCode ]( int code ) { exitCode = code; } );
-        Q_UNUSED( earlyParameters );
-        return exitCode;
-    }
 
     const auto& config = Configuration::getSynced();
     setApplicationAttributes( config.enableQtHighDpi(), config.scaleFactorRounding() );
@@ -214,9 +185,9 @@ int main( int argc, char* argv[] )
         auto startNewSession = true;
         MainWindow* mw = nullptr;
         if ( parameters.load_session
-             || previousRunCrashed
-             || ( parameters.filenames.empty() && !parameters.new_session
-                  && config.loadLastSession() ) ) {
+             || ( !parameters.new_session
+                  && ( previousRunCrashed
+                       || ( parameters.filenames.empty() && config.loadLastSession() ) ) ) ) {
             mw = app.reloadSession();
             startNewSession = false;
         }

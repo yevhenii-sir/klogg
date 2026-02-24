@@ -189,6 +189,7 @@ class LogData : public AbstractLogData {
     QMetaObject::Connection workerIndexingProgressConnection_;
     QMetaObject::Connection workerIndexingFinishedConnection_;
     QMetaObject::Connection workerCheckFileChangesFinishedConnection_;
+    bool shuttingDown_{ false };
 };
 
 #endif

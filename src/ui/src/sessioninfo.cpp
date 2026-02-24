@@ -25,6 +25,12 @@
 
 constexpr int OPENFILES_VERSION = 1;
 constexpr int SESSION_VERSION = 2;
+namespace {
+constexpr auto WINDOWS_ARRAY_KEY = "windowList";
+constexpr auto LEGACY_WINDOWS_ARRAY_KEY = "windows";
+constexpr auto OPENFILES_ARRAY_KEY = "entries";
+constexpr auto LEGACY_OPENFILES_ARRAY_KEY = "openFiles";
+}
 
 void SessionInfo::retrieveFromStorage( QSettings& settings )
 {
@@ -38,7 +44,11 @@ void SessionInfo::retrieveFromStorage( QSettings& settings )
     const auto sessionVersion = settings.value( "version", 0 ).toInt();
     if ( sessionVersion == 1 || sessionVersion == SESSION_VERSION ) {
         dirtyShutdown_ = settings.value( "dirtyShutdown", false ).toBool();
-        const auto windowsCount = settings.beginReadArray( "windows" );
+        auto windowsCount = settings.beginReadArray( WINDOWS_ARRAY_KEY );
+        if ( windowsCount == 0 ) {
+            settings.endArray();
+            windowsCount = settings.beginReadArray( LEGACY_WINDOWS_ARRAY_KEY );
+        }
         for ( auto windowIndex = 0; windowIndex < windowsCount; ++windowIndex ) {
             settings.setArrayIndex( static_cast<int>( windowIndex ) );
             QString windowId = settings.value( "id" ).toString();
@@ -49,7 +59,11 @@ void SessionInfo::retrieveFromStorage( QSettings& settings )
             if ( settings.contains( "OpenFiles/version" ) ) {
                 settings.beginGroup( "OpenFiles" );
                 if ( settings.value( "version" ).toInt() == OPENFILES_VERSION ) {
-                    int size = settings.beginReadArray( "openFiles" );
+                    int size = settings.beginReadArray( OPENFILES_ARRAY_KEY );
+                    if ( size == 0 ) {
+                        settings.endArray();
+                        size = settings.beginReadArray( LEGACY_OPENFILES_ARRAY_KEY );
+                    }
                     LOG_DEBUG << "SessionInfo: " << size << " files.";
                     for ( int i = 0; i < size; ++i ) {
                         settings.setArrayIndex( i );
@@ -86,8 +100,9 @@ void SessionInfo::saveToStorage( QSettings& settings ) const
     settings.setValue( "version", SESSION_VERSION );
     settings.setValue( "dirtyShutdown", dirtyShutdown_ );
 
-    settings.remove( "windows" );
-    settings.beginWriteArray( "windows" );
+    // "Window/windows" is ambiguous on Windows INI backend because keys are
+    // case-insensitive. Use a distinct key while still reading legacy data.
+    settings.beginWriteArray( WINDOWS_ARRAY_KEY );
     for ( auto windowIndex = 0u; windowIndex < windows_.size(); ++windowIndex ) {
         const auto& window = windows_.at( windowIndex );
         settings.setArrayIndex( static_cast<int>( windowIndex ) );
@@ -98,8 +113,7 @@ void SessionInfo::saveToStorage( QSettings& settings ) const
 
         settings.beginGroup( "OpenFiles" );
         settings.setValue( "version", OPENFILES_VERSION );
-        settings.remove( "openFiles" );
-        settings.beginWriteArray( "openFiles" );
+        settings.beginWriteArray( OPENFILES_ARRAY_KEY );
         for ( unsigned i = 0; i < window.openFiles.size(); ++i ) {
             settings.setArrayIndex( static_cast<int>( i ) );
             const OpenFile* open_file = &( window.openFiles.at( i ) );

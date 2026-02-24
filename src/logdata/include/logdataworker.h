@@ -41,7 +41,7 @@
 
 #include "containers.h"
 #include "linetypes.h"
-#include <qthreadpool.h>
+#include <thread>
 #include <variant>
 
 #include <QFile>
@@ -382,6 +382,9 @@ public:
     // Interrupts the indexing if one is in progress
     void interrupt();
 
+    // Blocks until the current worker operation has fully completed.
+    void waitForDone();
+
 Q_SIGNALS:
     // Sent during the indexing process to signal progress
     // percent being the percentage of completion.
@@ -394,15 +397,16 @@ Q_SIGNALS:
     // to copy the new data back.
     void checkFileChangesFinished( MonitoredFileStatus status );
 
-private Q_SLOTS:
+  private Q_SLOTS:
     void onIndexingFinished( bool result );
     void onCheckFileFinished( MonitoredFileStatus result );
 
-private:
+  private:
     OperationResult connectSignalsAndRun( IndexOperation* operationRequested );
+    void emitIndexingProgressedOnOwnerThread( int percent );
+    void emitIndexingFinishedOnOwnerThread( LoadingStatus status );
+    void emitCheckFileFinishedOnOwnerThread( MonitoredFileStatus status );
 
-    // Mutex to wait for operations
-    QThreadPool operationsPool_;
     Mutex operationsMutex_;
     AtomicFlag interruptRequest_;
 
@@ -410,6 +414,10 @@ private:
 
     // Pointer to the owner's indexing data (we modify it)
     std::shared_ptr<IndexingData> indexing_data_;
+
+    // Declared last so it is destroyed first.  The destructor body joins this thread
+    // before other members are destroyed, guaranteeing the task has fully exited.
+    std::thread opThread_;
 };
 
 #endif
