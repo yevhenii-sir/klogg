@@ -117,6 +117,18 @@ elseif(KLOGG_USE_VECTORSCAN)
     "BUILD_AVX512VBMI ${VECTORSCAN_BUILD_AVX512}"
     "FAT_RUNTIME OFF"
   )
+
+  execute_process(
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DREPO_DIR=${vectorscan_SOURCE_DIR}
+      -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/patches/fix_vectorscan_msvc_aligned_free.patch
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/apply_git_patch.cmake
+    RESULT_VARIABLE _vectorscan_patch_result
+  )
+  if(NOT _vectorscan_patch_result EQUAL 0)
+    message(FATAL_ERROR "Failed to apply VectorScan patch: ${CMAKE_CURRENT_SOURCE_DIR}/patches/fix_vectorscan_msvc_aligned_free.patch")
+  endif()
  
   message("Adding alias for vectorscan")
   add_library(klogg_vectorscan INTERFACE)

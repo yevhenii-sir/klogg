@@ -132,12 +132,8 @@ RegularExpression::RegularExpression( const RegularExpressionPattern& pattern )
             expression_ = QString::fromStdString( subPatterns_.front().id() );
         }
 
-        // Only compile patterns with Vectorscan when the Hyperscan engine is configured.
-        // On Windows (MSVC + AVX2), Vectorscan pattern compilation can corrupt the heap
-        // even when the resulting matcher is later discarded in PatternMatcher — the
-        // config check there comes too late.  Leave hsExpression_ default-constructed
-        // (database_ = null → createMatcher() falls back to DefaultRegularExpressionMatcher)
-        // and validate patterns via QRegularExpression instead.
+        // Compile patterns with the backend selected in Configuration so validation
+        // matches the matcher implementation used by the product and tests.
         const auto& config = Configuration::get();
         if ( config.regexpEngine() == RegexpEngine::Hyperscan ) {
             hsExpression_ = HsRegularExpression( subPatterns_ );
@@ -273,6 +269,16 @@ MultiRegularExpression::MultiRegularExpression(
 std::unique_ptr<MultiPatternMatcher> MultiRegularExpression::createMatcher() const
 {
     return std::make_unique<MultiPatternMatcher>( *this );
+}
+
+bool MultiRegularExpression::isValid() const
+{
+    return isValid_;
+}
+
+QString MultiRegularExpression::errorString() const
+{
+    return errorString_;
 }
 
 MultiPatternMatcher::MultiPatternMatcher( const MultiRegularExpression& expression )

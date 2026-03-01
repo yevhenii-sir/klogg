@@ -136,7 +136,7 @@ struct LogDataLoader {
         file.setAutoRemove( false );
 
         auto& config = Configuration::getSynced();
-        config.setRegexpEnging( RegexpEngine::QRegularExpression );
+        configureProductLikeRegexpEngine( config );
 
         REQUIRE( generateDataFiles( file ) );
         SafeQSignalSpy loadEndSpy( &log_data, SIGNAL( loadingFinished( LoadingStatus ) ) );
@@ -958,7 +958,7 @@ SCENARIO( "max length includes context line lengths", "[logdata][context]" )
     auto& config = Configuration::getSynced();
     config.setSearchThreadPoolSize( 0 );
     config.setUseParallelSearch( false );
-    config.setRegexpEnging( RegexpEngine::QRegularExpression );
+    configureProductLikeRegexpEngine( config );
 
     SafeQSignalSpy searchProgressSpy{ filtered_data.get(),
                                       &LogFilteredData::searchProgressed };

@@ -1,0 +1,17 @@
+diff --git a/src/util/alloc.cpp b/src/util/alloc.cpp
+index 07db2f09..ab5e1f4f 100644
+--- a/src/util/alloc.cpp
++++ b/src/util/alloc.cpp
+@@ -83,10 +83,12 @@ void aligned_free_internal(void *ptr) {
+     if (!ptr) {
+         return;
+     }
+ 
+ #if defined(__MINGW32__) || defined(__MINGW64__)
+     __mingw_aligned_free(ptr);
++#elif defined(HAVE__ALIGNED_MALLOC)
++    _aligned_free(ptr);
+ #else
+     free(ptr);
+ #endif
+ }

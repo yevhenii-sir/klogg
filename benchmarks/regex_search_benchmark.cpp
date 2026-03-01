@@ -229,7 +229,11 @@ QVector<ProfileSpec> availableProfiles()
 template <typename T>
 QVector<T> selectByIds( const QVector<T>& all, const QString& csv, const char* kind )
 {
-    const auto wantedIds = csv.split( ',', Qt::SkipEmptyParts );
+#if QT_VERSION >= QT_VERSION_CHECK( 5, 15, 0 )
+    const auto wantedIds = csv.split( QLatin1Char( ',' ), Qt::SkipEmptyParts );
+#else
+    const auto wantedIds = csv.split( QLatin1Char( ',' ), QString::SkipEmptyParts );
+#endif
     QVector<T> selected;
     selected.reserve( wantedIds.size() );
 
@@ -363,7 +367,8 @@ Stats computeStats( QVector<double> values )
     std::sort( values.begin(), values.end() );
     stats.min = values.front();
     stats.max = values.back();
-    stats.mean = std::accumulate( values.cbegin(), values.cend(), 0.0 ) / values.size();
+    stats.mean = std::accumulate( values.cbegin(), values.cend(), 0.0 )
+               / static_cast<double>( values.size() );
 
     const auto mid = values.size() / 2;
     if ( values.size() % 2 == 0 ) {
@@ -378,7 +383,7 @@ Stats computeStats( QVector<double> values )
         const auto delta = value - stats.mean;
         variance += delta * delta;
     }
-    variance /= values.size();
+    variance /= static_cast<double>( values.size() );
     stats.stddev = std::sqrt( variance );
 
     return stats;
@@ -602,7 +607,7 @@ FilePrepResult ensureLogFile( const BenchmarkOptions& options, const SizeSpec& s
                 .toStdString() );
     }
 
-    err << "Generating " << size.label << " corpus at " << filePath << Qt::endl;
+    err << "Generating " << size.label << " corpus at " << filePath << QLatin1Char( '\n' );
 
     QFile file{ filePath };
     if ( !file.open( QIODevice::WriteOnly | QIODevice::Truncate ) ) {
@@ -701,7 +706,8 @@ CaseResult benchmarkCase( const FilePrepResult& filePrepResult, const IndexedLog
     result.indexMs = indexedLog.indexMs;
 
     err << "Running " << options.label << " size=" << size.label << " profile=" << profile.id
-        << " warmup=" << options.warmup << " iterations=" << options.iterations << Qt::endl;
+        << " warmup=" << options.warmup << " iterations=" << options.iterations
+        << QLatin1Char( '\n' );
 
     for ( int warmupIndex = 0; warmupIndex < options.warmup; ++warmupIndex ) {
         auto filteredData = indexedLog.logData->getNewFilteredData();
@@ -872,18 +878,20 @@ void writeJsonReport( const QString& outputPath, const QJsonObject& report )
 
 void printSummary( QTextStream& out, const BenchmarkOptions& options, const QVector<CaseResult>& results )
 {
-    out << "# Regex Search Benchmark: " << options.label << Qt::endl;
-    out << Qt::endl;
-    out << "## Regex Profiles" << Qt::endl;
-    out << Qt::endl;
-    out << "| Profile | Pattern |" << Qt::endl;
-    out << "| --- | --- |" << Qt::endl;
+    out << "# Regex Search Benchmark: " << options.label << QLatin1Char( '\n' );
+    out << QLatin1Char( '\n' );
+    out << "## Regex Profiles" << QLatin1Char( '\n' );
+    out << QLatin1Char( '\n' );
+    out << "| Profile | Pattern |" << QLatin1Char( '\n' );
+    out << "| --- | --- |" << QLatin1Char( '\n' );
     for ( const auto& profile : options.profiles ) {
-        out << "| " << profile.id << " | `" << profile.pattern << "` |" << Qt::endl;
+        out << "| " << profile.id << " | `" << profile.pattern << "` |" << QLatin1Char( '\n' );
     }
-    out << Qt::endl;
-    out << "| Size | Profile | Searched lines | Matches | Hit rate | Median search (ms) | Mean search (ms) | Median throughput (MiB/s) | Status |" << Qt::endl;
-    out << "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |" << Qt::endl;
+    out << QLatin1Char( '\n' );
+    out << "| Size | Profile | Searched lines | Matches | Hit rate | Median search (ms) | Mean search (ms) | Median throughput (MiB/s) | Status |"
+        << QLatin1Char( '\n' );
+    out << "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
+        << QLatin1Char( '\n' );
 
     for ( const auto& result : results ) {
         if ( result.status != QLatin1String( "ok" ) ) {
@@ -892,7 +900,7 @@ void printSummary( QTextStream& out, const BenchmarkOptions& options, const QVec
             if ( !result.skipReason.isEmpty() ) {
                 out << " (" << result.skipReason << ")";
             }
-            out << " |" << Qt::endl;
+            out << " |" << QLatin1Char( '\n' );
             continue;
         }
 
@@ -900,7 +908,8 @@ void printSummary( QTextStream& out, const BenchmarkOptions& options, const QVec
             << result.searchedLineCount << " | " << result.matchCount << " | "
             << formatHitRate( result.hitRate ) << " | " << formatDuration( result.searchMs.median )
             << " | " << formatDuration( result.searchMs.mean ) << " | "
-            << formatThroughput( result.throughputMiBs.median ) << " | ok |" << Qt::endl;
+            << formatThroughput( result.throughputMiBs.median ) << " | ok |"
+            << QLatin1Char( '\n' );
     }
 }
 
@@ -973,7 +982,7 @@ int main( int argc, char* argv[] )
 
         return 0;
     } catch ( const std::exception& ex ) {
-        err << "regex_search_benchmark failed: " << ex.what() << Qt::endl;
+        err << "regex_search_benchmark failed: " << ex.what() << QLatin1Char( '\n' );
     }
 
     return 1;

@@ -27,6 +27,7 @@
 
 #include "configuration.h"
 #include <persistentinfo.h>
+#include "test_utils.h"
 
 const bool PersistentInfo::ForcePortable = true;
 
@@ -53,11 +54,7 @@ int main( int argc, char* argv[] )
 
     auto& config = Configuration::getSynced();
     Q_UNUSED( config );
-#ifdef Q_OS_WIN
-    // Windows builds can hit instability in the HS backend with the current
-    // Vectorscan toolchain; use the Qt engine for deterministic tests.
-    config.setRegexpEnging( RegexpEngine::QRegularExpression );
-#endif
+    configureProductLikeRegexpEngine( config );
 
     return Catch::Session().run( argc, argv );
 }

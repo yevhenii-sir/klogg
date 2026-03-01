@@ -31,6 +31,7 @@
 #include <persistentinfo.h>
 
 #include <logger.h>
+#include <test_utils.h>
 
 const bool PersistentInfo::ForcePortable = true;
 
@@ -100,11 +101,7 @@ int main( int argc, char* argv[] )
     config.setIndexReadBufferSizeMb( 1 );
     config.setUseSearchResultsCache( false );
     config.setConfirmTabClose( false );
-#ifdef Q_OS_WIN
-    // Windows builds can hit instability in the HS backend with the current
-    // Vectorscan toolchain; use the Qt engine for deterministic tests.
-    config.setRegexpEnging( RegexpEngine::QRegularExpression );
-#endif
+    configureProductLikeRegexpEngine( config );
     config.save();
 
     auto higthlighters = HighlighterSetCollection::getSynced();

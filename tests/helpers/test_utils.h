@@ -7,6 +7,8 @@
 
 #include <QSignalSpy>
 #include <QTest>
+
+#include <configuration.h>
 /*
 struct TestTimer {
     TestTimer()
@@ -103,6 +105,40 @@ class SafeQSignalSpy {
 
   private:
     std::unique_ptr<QSignalSpy> spy_;
+};
+
+inline void configureProductLikeRegexpEngine( Configuration& config )
+{
+#ifdef KLOGG_HAS_HS
+    config.setRegexpEnging( RegexpEngine::Hyperscan );
+#else
+    config.setRegexpEnging( RegexpEngine::QRegularExpression );
+#endif
+}
+
+class ScopedRegexpEngine {
+  public:
+    explicit ScopedRegexpEngine( RegexpEngine engine )
+        : config_( Configuration::getSynced() )
+        , previousEngine_( config_.regexpEngine() )
+    {
+        config_.setRegexpEnging( engine );
+    }
+
+    ~ScopedRegexpEngine()
+    {
+        config_.setRegexpEnging( previousEngine_ );
+    }
+
+    ScopedRegexpEngine( const ScopedRegexpEngine& ) = delete;
+    ScopedRegexpEngine& operator=( const ScopedRegexpEngine& ) = delete;
+
+    ScopedRegexpEngine( ScopedRegexpEngine&& ) = delete;
+    ScopedRegexpEngine& operator=( ScopedRegexpEngine&& ) = delete;
+
+  private:
+    Configuration& config_;
+    RegexpEngine previousEngine_;
 };
 
 template<typename F>
