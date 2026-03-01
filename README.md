@@ -86,7 +86,7 @@ And on top of that klogg:
 
 * Is heavily optimized using multi-threading and SIMD
 * Supports files with more than 2147483647 lines
-* Includes much faster regular expressions search (2-4 times)
+* Includes optimized regular expressions search; benchmark details live in [docs/REGEX_BENCHMARKS.md](docs/REGEX_BENCHMARKS.md)
 * Allows combining regular expressions with boolean operators (AND, OR, NOT)
 * Supports many common text encodings
 * Detects file encoding automatically using [uchardet](https://www.freedesktop.org/wiki/Software/uchardet/) library (supports utf8, utf16, cp1251 and more) 
@@ -97,10 +97,6 @@ And on top of that klogg:
 * Has configurable shortcuts
 * Has a scratchpad window for taking notes and doing basic data transformations
 * Provides lots of small features that make life easier (closing tabs, copying file paths, favorite files menu, etc.)
-
-Here is a small demo showing how much faster klogg is (searching in ~1Gb file stored on tmpfs):
-
-https://user-images.githubusercontent.com/1620716/117588567-bea39100-b12c-11eb-990a-90a667bcaeaa.mp4
 
 List of glogg issues that have been fixed/implemented in klogg can be found [here](https://github.com/ZEACENT/klogg/discussions/302).
 
@@ -189,39 +185,22 @@ As indicated by this link from the official appimage documentation: https://docs
 ## Building
 
 Please review
-[BUILD.md](BUILD.md)
+[docs/BUILD.md](docs/BUILD.md)
 for how to setup Klogg on your local machine for development and testing purposes.
 
-### SIMD benchmark snapshot (2026-02-14)
+### Regex Benchmark Snapshot
 
-The regex backend can be built with different vectorscan SIMD settings:
+Regular-expression benchmark methodology now lives in [docs/REGEX_BENCHMARKS.md](docs/REGEX_BENCHMARKS.md). The current snapshot was refreshed on March 1, 2026 across `simple`, `normal`, and `complex` regex profiles with `50MB`, `500MB`, and `5GB` tmpfs-backed corpora, comparing `Qt`, `Vectorscan generic`, and `Vectorscan AVX` builds.
 
-- `AVX2=OFF, AVX512=OFF`
-- `AVX2=ON, AVX512=OFF`
-- `AVX2=ON, AVX512=ON`
+500MB median search time snapshot:
 
-To quantify the impact, we ran `hsbench` with vectorscan `5.4.11` on the same host and corpus (`~245 MB`, `1,200,000` blocks), using block mode (`-N`) and repeated scans.
+| Profile | Qt (ms) | Vectorscan generic (ms) | Vectorscan AVX (ms) |
+| --- | ---: | ---: | ---: |
+| `simple` | 523.41 | 169.98 | 169.92 |
+| `normal` | 690.74 | 186.47 | 180.23 |
+| `complex` | 1071.93 | 219.07 | 204.00 |
 
-Environment:
-
-- `macOS 26.2 x86_64`
-- `AppleClang 17`
-- vectorscan features reported by `hsbench`: `AVX2` or `AVX512VBMI` depending on build flags
-
-Results (mean throughput, Mbit/s):
-
-| Config | Log-mixed workload (n=5) | Relative vs. `OFF/OFF` | Regex-heavy workload (n=5) | Relative vs. `OFF/OFF` |
-| --- | ---: | ---: | ---: | ---: |
-| `AVX2=OFF, AVX512=OFF` | 326.80 | baseline | 324.66 | baseline |
-| `AVX2=ON, AVX512=OFF` | 326.46 | -0.10% | 319.12 | -1.71% |
-| `AVX2=ON, AVX512=ON` | 324.12 | -0.82% | 344.42 | +6.09% |
-
-Takeaway:
-
-- The impact is workload-dependent.
-- For log-mixed scans, differences were within about `1%`.
-- For regex-heavy scans, enabling AVX512 improved throughput by about `6-8%` (vs. lower-SIMD builds).
-- Disabling AVX512 for Windows/MSVC CI stability is expected to trade off up to about `8%` in regex-heavy engine-level benchmarks, while typical end-to-end UI workflows may show smaller differences.
+The full matrix, throughput tables, regex contents, and fairness counters (`searched lines`, `matches`, `hit rate`) live in [docs/benchmarks/regex-benchmark-results.md](docs/benchmarks/regex-benchmark-results.md) and [docs/benchmarks/regex-benchmark-results.json](docs/benchmarks/regex-benchmark-results.json).
 
 ## Third-Party Dependencies
 

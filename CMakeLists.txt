@@ -64,6 +64,7 @@ set(IDENTIFIER "com.github.variar.klogg")
 set(PROJECT_DESCRIPTION "${PROJECT_NAME} log viewer")
 
 option(KLOGG_BUILD_TESTS "Build tests" ON)
+option(KLOGG_BUILD_BENCHMARKS "Build benchmark tools" ON)
 option(KLOGG_USE_LTO "Use link time optimization" ON)
 option(KLOGG_USE_SENTRY "Use Sentry" OFF)
 option(KLOGG_GENERIC_CPU "Build for generic CPU" OFF)
@@ -302,6 +303,9 @@ add_custom_target(ci_build)
 
 add_subdirectory(3rdparty)
 add_subdirectory(src)
+if(${KLOGG_BUILD_BENCHMARKS})
+  add_subdirectory(benchmarks)
+endif()
 add_subdirectory(website)
 
 enable_testing()
@@ -411,6 +415,9 @@ add_custom_target(
           ${COPYING_FILE}
           ${NOTICE_FILE}
           ${DOCUMENTATION_FILE}
+          ${CMAKE_CURRENT_SOURCE_DIR}/docs/REGEX_BENCHMARKS.md
+          ${CMAKE_CURRENT_SOURCE_DIR}/docs/benchmarks/regex-benchmark-results.md
+          ${CMAKE_CURRENT_SOURCE_DIR}/docs/benchmarks/regex-benchmark-results.json
 )
 
 add_custom_target(klogg_stuff SOURCES .clang-format .clang-tidy .cmake-format)

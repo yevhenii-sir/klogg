@@ -476,6 +476,7 @@ Supports:
 - Parallel search: 2-4x speedup
 - Cache hit: Near-instant results
 - Hyperscan: 2-4x faster than Qt Regex
+- Benchmark methodology and generated snapshots: [Regex Search Benchmarks](./REGEX_BENCHMARKS.md)
 
 ### Rendering Performance
 
@@ -840,4 +841,3 @@ cmake --build build
 **Document Version**: 1.0  
 **Last Updated**: 2025-12-06  
 **Maintainer**: Klogg Development Team
-
