@@ -109,8 +109,8 @@ class SafeQSignalSpy {
 
 inline void configureProductLikeRegexpEngine( Configuration& config )
 {
-#ifdef KLOGG_HAS_HS
-    config.setRegexpEnging( RegexpEngine::Hyperscan );
+#ifdef KLOGG_HAS_VECTORSCAN
+    config.setRegexpEnging( RegexpEngine::Vectorscan );
 #else
     config.setRegexpEnging( RegexpEngine::QRegularExpression );
 #endif

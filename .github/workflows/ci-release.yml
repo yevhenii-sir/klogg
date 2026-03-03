@@ -63,30 +63,20 @@ jobs:
     - name: Decompress debug symbols
       shell: sh
       run: |
-        if [ -f ./packages-focal/klogg_focal.debug.xz ]; then
-          xz -d ./packages-focal/klogg_focal.debug.xz
+        if [ -f ./packages-jammy-vs-gen/klogg_jammy_vs-gen.debug.xz ]; then
+          xz -d ./packages-jammy-vs-gen/klogg_jammy_vs-gen.debug.xz
         else
-          echo "Warning: ./packages-focal/klogg_focal.debug.xz not found, skipping"
+          echo "Warning: ./packages-jammy-vs-gen/klogg_jammy_vs-gen.debug.xz not found, skipping"
         fi
-        if [ -f ./packages-jammy/klogg_jammy.debug.xz ]; then
-          xz -d ./packages-jammy/klogg_jammy.debug.xz
+        if [ -f ./packages-noble-vs-gen/klogg_noble_vs-gen.debug.xz ]; then
+          xz -d ./packages-noble-vs-gen/klogg_noble_vs-gen.debug.xz
         else
-          echo "Warning: ./packages-jammy/klogg_jammy.debug.xz not found, skipping"
+          echo "Warning: ./packages-noble-vs-gen/klogg_noble_vs-gen.debug.xz not found, skipping"
         fi
-        if [ -f ./packages-noble/klogg_noble.debug.xz ]; then
-          xz -d ./packages-noble/klogg_noble.debug.xz
+        if [ -f ./packages-appimage-vs-gen/klogg_appimage_vs-gen.debug.xz ]; then
+          xz -d ./packages-appimage-vs-gen/klogg_appimage_vs-gen.debug.xz
         else
-          echo "Warning: ./packages-noble/klogg_noble.debug.xz not found, skipping"
-        fi
-        if [ -f ./packages-oracle/klogg_oracle.debug.xz ]; then
-          xz -d ./packages-oracle/klogg_oracle.debug.xz
-        else
-          echo "Warning: ./packages-oracle/klogg_oracle.debug.xz not found, skipping"
-        fi
-        if [ -f ./packages-appimage/klogg_appimage.debug.xz ]; then
-          xz -d ./packages-appimage/klogg_appimage.debug.xz
-        else
-          echo "Warning: ./packages-appimage/klogg_appimage.debug.xz not found, skipping"
+          echo "Warning: ./packages-appimage-vs-gen/klogg_appimage_vs-gen.debug.xz not found, skipping"
         fi
 
     - name: Setup Sentry CLI
@@ -110,43 +100,33 @@ jobs:
       if: env.SENTRY_TOKEN != ''
       shell: sh
       run: |
-        if [ -f ./packages-focal/klogg_focal.debug ] && [ -f ./packages-focal/klogg_focal ]; then
-          sentry-cli upload-dif ./packages-focal/klogg_focal.debug ./packages-focal/klogg_focal
+        if [ -f ./packages-jammy-vs-gen/klogg_jammy_vs-gen.debug ] && [ -f ./packages-jammy-vs-gen/klogg_jammy_vs-gen ]; then
+          sentry-cli upload-dif ./packages-jammy-vs-gen/klogg_jammy_vs-gen.debug ./packages-jammy-vs-gen/klogg_jammy_vs-gen
         else
-          echo "Warning: ./packages-focal debug files not found, skipping"
+          echo "Warning: ./packages-jammy-vs-gen debug files not found, skipping"
         fi
-        if [ -f ./packages-jammy/klogg_jammy.debug ] && [ -f ./packages-jammy/klogg_jammy ]; then
-          sentry-cli upload-dif ./packages-jammy/klogg_jammy.debug ./packages-jammy/klogg_jammy
+        if [ -f ./packages-noble-vs-gen/klogg_noble_vs-gen.debug ] && [ -f ./packages-noble-vs-gen/klogg_noble_vs-gen ]; then
+          sentry-cli upload-dif ./packages-noble-vs-gen/klogg_noble_vs-gen.debug  ./packages-noble-vs-gen/klogg_noble_vs-gen
         else
-          echo "Warning: ./packages-jammy debug files not found, skipping"
+          echo "Warning: ./packages-noble-vs-gen debug files not found, skipping"
         fi
-        if [ -f ./packages-noble/klogg_noble.debug ] && [ -f ./packages-noble/klogg_noble ]; then
-          sentry-cli upload-dif ./packages-noble/klogg_noble.debug  ./packages-noble/klogg_noble
+        if [ -f ./packages-appimage-vs-gen/klogg_appimage_vs-gen.debug ] && [ -f ./packages-appimage-vs-gen/klogg_appimage_vs-gen ]; then
+          sentry-cli upload-dif ./packages-appimage-vs-gen/klogg_appimage_vs-gen.debug  ./packages-appimage-vs-gen/klogg_appimage_vs-gen
         else
-          echo "Warning: ./packages-noble debug files not found, skipping"
-        fi
-        if [ -f ./packages-oracle/klogg_oracle.debug ] && [ -f ./packages-oracle/klogg_oracle ]; then
-          sentry-cli upload-dif ./packages-oracle/klogg_oracle.debug ./packages-oracle/klogg_oracle
-        else
-          echo "Warning: ./packages-oracle debug files not found, skipping"
-        fi
-        if [ -f ./packages-appimage/klogg_appimage.debug ] && [ -f ./packages-appimage/klogg_appimage ]; then
-          sentry-cli upload-dif ./packages-appimage/klogg_appimage.debug  ./packages-appimage/klogg_appimage
-        else
-          echo "Warning: ./packages-appimage debug files not found, skipping"
+          echo "Warning: ./packages-appimage-vs-gen debug files not found, skipping"
         fi
 
     - name: Upload symbols mac
       if: env.SENTRY_TOKEN != ''
       shell: sh
       run: |
-        if [ -d ./packages-macos-intel-qt6 ] && [ -f ./packages-macos-intel-qt6/klogg-x64.app/Contents/MacOS/klogg ]; then
-          sentry-cli upload-dif ./packages-macos-intel-qt6/klogg-x64.app/Contents/MacOS/klogg ./packages-macos-intel-qt6/klogg-x64.dSym
+        if [ -d ./packages-macos-intel-qt6-vs-gen ] && [ -f ./packages-macos-intel-qt6-vs-gen/klogg-x64.app/Contents/MacOS/klogg ]; then
+          sentry-cli upload-dif ./packages-macos-intel-qt6-vs-gen/klogg-x64.app/Contents/MacOS/klogg ./packages-macos-intel-qt6-vs-gen/klogg-x64.dSym
         else
           echo "Skipping macOS Intel symbols upload - artifacts not found"
         fi
-        if [ -d ./packages-macos-arm-qt6 ] && [ -f ./packages-macos-arm-qt6/klogg-arm64.app/Contents/MacOS/klogg ]; then
-          sentry-cli upload-dif ./packages-macos-arm-qt6/klogg-arm64.app/Contents/MacOS/klogg ./packages-macos-arm-qt6/klogg-arm64.dSym
+        if [ -d ./packages-macos-arm-qt6-vs-arm64 ] && [ -f ./packages-macos-arm-qt6-vs-arm64/klogg-arm64.app/Contents/MacOS/klogg ]; then
+          sentry-cli upload-dif ./packages-macos-arm-qt6-vs-arm64/klogg-arm64.app/Contents/MacOS/klogg ./packages-macos-arm-qt6-vs-arm64/klogg-arm64.dSym
         else
           echo "Skipping macOS ARM symbols upload - artifacts not found"
         fi
@@ -155,38 +135,30 @@ jobs:
       if: env.SENTRY_TOKEN != ''
       shell: sh
       run: |
-        sentry-cli upload-dif ./packages-windows-x86-qt5/klogg-$KLOGG_VERSION-x86-Qt5-pdb.zip 
-        sentry-cli upload-dif ./packages-windows-x64-qt6/klogg-$KLOGG_VERSION-x64-Qt6-pdb.zip
+        sentry-cli upload-dif ./packages-windows-x86-qt5-vs-gen/klogg-$KLOGG_VERSION-x86-Qt5-vs-gen-pdb.zip 
+        sentry-cli upload-dif ./packages-windows-x64-qt6-vs-avx2/klogg-$KLOGG_VERSION-x64-Qt6-vs-avx2-pdb.zip
 
     - name: Cleanup release artifacts
       shell: sh
       run: |
-        rm -rf ./packages-focal/klogg_focal
-        rm -rf ./packages-jammy/klogg_jammy
-        rm -rf ./packages-noble/klogg_noble
-        rm -rf ./packages-oracle/klogg_oracle
-        rm -rf ./packages-appimage/klogg_appimage
-        if [ -d ./packages-macos-intel-qt6/klogg-x64.app ]; then
-          rm -rf ./packages-macos-intel-qt6/klogg-x64.app
+        rm -rf ./packages-jammy-vs-gen/klogg_jammy_vs-gen
+        rm -rf ./packages-noble-vs-gen/klogg_noble_vs-gen
+        rm -rf ./packages-appimage-vs-gen/klogg_appimage_vs-gen
+        if [ -d ./packages-macos-intel-qt6-vs-gen/klogg-x64.app ]; then
+          rm -rf ./packages-macos-intel-qt6-vs-gen/klogg-x64.app
         fi
-        if [ -d ./packages-macos-arm-qt6/klogg-arm64.app ]; then
-          rm -rf ./packages-macos-arm-qt6/klogg-arm64.app
+        if [ -d ./packages-macos-arm-qt6-vs-arm64/klogg-arm64.app ]; then
+          rm -rf ./packages-macos-arm-qt6-vs-arm64/klogg-arm64.app
         fi
         mkdir -p ./linux-debug
-        if [ -f ./packages-focal/klogg_focal.debug ]; then
-          mv ./packages-focal/klogg_focal.debug ./linux-debug
+        if [ -f ./packages-jammy-vs-gen/klogg_jammy_vs-gen.debug ]; then
+          mv ./packages-jammy-vs-gen/klogg_jammy_vs-gen.debug ./linux-debug
         fi
-        if [ -f ./packages-jammy/klogg_jammy.debug ]; then
-          mv ./packages-jammy/klogg_jammy.debug ./linux-debug
+        if [ -f ./packages-noble-vs-gen/klogg_noble_vs-gen.debug ]; then
+          mv ./packages-noble-vs-gen/klogg_noble_vs-gen.debug ./linux-debug
         fi
-        if [ -f ./packages-noble/klogg_noble.debug ]; then
-          mv ./packages-noble/klogg_noble.debug ./linux-debug
-        fi
-        if [ -f ./packages-oracle/klogg_oracle.debug ]; then
-          mv ./packages-oracle/klogg_oracle.debug ./linux-debug
-        fi
-        if [ -f ./packages-appimage/klogg_appimage.debug ]; then
-          mv ./packages-appimage/klogg_appimage.debug ./linux-debug
+        if [ -f ./packages-appimage-vs-gen/klogg_appimage_vs-gen.debug ]; then
+          mv ./packages-appimage-vs-gen/klogg_appimage_vs-gen.debug ./linux-debug
         fi
         if [ -n "$(ls -A ./linux-debug/*.debug 2>/dev/null)" ]; then
           tar -cJf ./linux-debug/klogg-$KLOGG_VERSION-symbols.tar.xz ./linux-debug/*.debug
@@ -199,28 +171,21 @@ jobs:
       shell: sh
       run: |
         mkdir ./packages-bin
-        mv ./packages-appimage/klogg_deps.tar.xz ./packages-bin/klogg-$KLOGG_VERSION-deps.tar.xz
-        ar p  ./packages-focal/klogg-$KLOGG_VERSION-focal.deb data.tar.gz > ./packages-bin/klogg-$KLOGG_VERSION-bin.tar.gz
+        mv ./packages-appimage-vs-gen/klogg_deps.tar.xz ./packages-bin/klogg-$KLOGG_VERSION-vs-gen-deps.tar.xz
         mv ./klogg_version/klogg_version.txt ./packages-bin
 
     - name: Prepare checksums
       shell: sh
       run: |
         sha256sum --binary ./packages-bin/* > ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
-        if [ -d ./packages-focal ] && [ -n "$(ls -A ./packages-focal/* 2>/dev/null)" ]; then
-          sha256sum --binary ./packages-focal/* >> ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
+        if [ -d ./packages-jammy-vs-gen ] && [ -n "$(ls -A ./packages-jammy-vs-gen/* 2>/dev/null)" ]; then
+          sha256sum --binary ./packages-jammy-vs-gen/* >> ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
         fi
-        if [ -d ./packages-jammy ] && [ -n "$(ls -A ./packages-jammy/* 2>/dev/null)" ]; then
-          sha256sum --binary ./packages-jammy/* >> ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
+        if [ -d ./packages-noble-vs-gen ] && [ -n "$(ls -A ./packages-noble-vs-gen/* 2>/dev/null)" ]; then
+          sha256sum --binary ./packages-noble-vs-gen/* >> ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
         fi
-        if [ -d ./packages-noble ] && [ -n "$(ls -A ./packages-noble/* 2>/dev/null)" ]; then
-          sha256sum --binary ./packages-noble/* >> ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
-        fi
-        if [ -d ./packages-oracle ] && [ -n "$(ls -A ./packages-oracle/* 2>/dev/null)" ]; then
-          sha256sum --binary ./packages-oracle/* >> ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
-        fi
-        if [ -d ./packages-appimage ] && [ -n "$(ls -A ./packages-appimage/* 2>/dev/null)" ]; then
-          sha256sum --binary ./packages-appimage/* >> ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
+        if [ -d ./packages-appimage-vs-gen ] && [ -n "$(ls -A ./packages-appimage-vs-gen/* 2>/dev/null)" ]; then
+          sha256sum --binary ./packages-appimage-vs-gen/* >> ./packages-bin/klogg-$KLOGG_VERSION-sha256.txt 2>/dev/null || true
         fi
         
     - name: Create GitHub Release
@@ -242,32 +207,28 @@ jobs:
           - **macOS**: See [macOS packages](#macos)
           
           ## Windows {#windows}
-          - Windows x64 (Qt 6): `klogg-${{ env.KLOGG_VERSION }}-x64-Qt6.exe`
-          - Windows x86 (Qt 5): `klogg-${{ env.KLOGG_VERSION }}-x86-Qt5.exe`
+          - Windows x64 (Qt 6, Vectorscan AVX2): `klogg-${{ env.KLOGG_VERSION }}-x64-Qt6-vs-avx2-setup.exe`
+          - Windows x86 (Qt 5, Vectorscan generic): `klogg-${{ env.KLOGG_VERSION }}-x86-Qt5-vs-gen-setup.exe`
           
           ## Linux {#linux}
-          - Ubuntu 20.04 (Focal): `klogg-${{ env.KLOGG_VERSION }}-focal.deb`
-          - Ubuntu 22.04 (Jammy): `klogg-${{ env.KLOGG_VERSION }}-jammy.deb`
-          - Ubuntu 24.04 (Noble): `klogg-${{ env.KLOGG_VERSION }}-noble.deb`
-          - Oracle Linux 8: `klogg-${{ env.KLOGG_VERSION }}-oracle.rpm`
-          - AppImage: `klogg-${{ env.KLOGG_VERSION }}-appimage.AppImage`
+          - Ubuntu 22.04 (Jammy, Vectorscan generic): `klogg-${{ env.KLOGG_VERSION }}-jammy-vs-gen.deb`
+          - Ubuntu 24.04 (Noble, Vectorscan generic): `klogg-${{ env.KLOGG_VERSION }}-noble-vs-gen.deb`
+          - AppImage (Vectorscan generic): `klogg-${{ env.KLOGG_VERSION }}-appimage-vs-gen.AppImage`
           
           ## macOS {#macos}
-          - Intel (x64): `klogg-${{ env.KLOGG_VERSION }}-mac-x64.dmg`
-          - Apple Silicon (ARM64): `klogg-${{ env.KLOGG_VERSION }}-mac-arm64.dmg`
+          - Intel (x64, Vectorscan generic): `klogg-${{ env.KLOGG_VERSION }}-mac-x64-vs-gen.dmg`
+          - Apple Silicon (ARM64, Vectorscan): `klogg-${{ env.KLOGG_VERSION }}-mac-arm64-vs-arm64.dmg`
         prerelease: false
         files: |
-          ./packages-windows-x86-qt5/*
-          ./packages-windows-x64-qt6/*
-          ./packages-focal/*
-          ./packages-jammy/*
-          ./packages-noble/*
-          ./packages-oracle/*
-          ./packages-appimage/*
+          ./packages-windows-x86-qt5-vs-gen/*
+          ./packages-windows-x64-qt6-vs-avx2/*
+          ./packages-jammy-vs-gen/*
+          ./packages-noble-vs-gen/*
+          ./packages-appimage-vs-gen/*
           ./packages-bin/*
           ./linux-debug/*
-          ./packages-macos-intel-qt6/*.dmg
-          ./packages-macos-arm-qt6/*.dmg
+          ./packages-macos-intel-qt6-vs-gen/*.dmg
+          ./packages-macos-arm-qt6-vs-arm64/*.dmg
 
     - name: Discord notification
       if: env.DISCORD_NEW_VERSIONS_WEBHOOK != ''

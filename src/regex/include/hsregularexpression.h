@@ -33,7 +33,7 @@
 
 #include "containers.h"
 
-#ifdef KLOGG_HAS_HS
+#ifdef KLOGG_HAS_VECTORSCAN
 #include <hs.h>
 
 #include "resourcewrapper.h"
@@ -72,7 +72,7 @@ class DefaultRegularExpressionMatcher {
     klogg::vector<QRegularExpression> regexp_;
 };
 
-#ifdef KLOGG_HAS_HS
+#ifdef KLOGG_HAS_VECTORSCAN
 
 using HsScratch = UniqueResource<hs_scratch_t, hs_free_scratch>;
 using HsDatabase = SharedResource<hs_database_t>;

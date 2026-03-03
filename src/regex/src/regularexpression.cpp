@@ -135,7 +135,7 @@ RegularExpression::RegularExpression( const RegularExpressionPattern& pattern )
         // Compile patterns with the backend selected in Configuration so validation
         // matches the matcher implementation used by the product and tests.
         const auto& config = Configuration::get();
-        if ( config.regexpEngine() == RegexpEngine::Hyperscan ) {
+        if ( config.regexpEngine() == RegexpEngine::Vectorscan ) {
             hsExpression_ = HsRegularExpression( subPatterns_ );
             isValid_ = hsExpression_.isValid();
             errorString_ = hsExpression_.errorString();
@@ -212,8 +212,8 @@ PatternMatcher::PatternMatcher( const RegularExpression& expression )
     , matcher_( expression.hsExpression_.createMatcher() )
 {
     const auto& config = Configuration::get();
-    const auto useHyperscanEngine = config.regexpEngine() == RegexpEngine::Hyperscan;
-    if ( !useHyperscanEngine ) {
+    const auto useVectorscanEngine = config.regexpEngine() == RegexpEngine::Vectorscan;
+    if ( !useVectorscanEngine ) {
         matcher_ = DefaultRegularExpressionMatcher( expression.subPatterns_ );
     }
 
@@ -243,7 +243,7 @@ MultiRegularExpression::MultiRegularExpression(
 {
     try {
         const auto& config = Configuration::get();
-        if ( config.regexpEngine() == RegexpEngine::Hyperscan ) {
+        if ( config.regexpEngine() == RegexpEngine::Vectorscan ) {
             hsExpression_ = HsRegularExpression( patterns_ );
             isValid_ = hsExpression_.isValid();
             errorString_ = hsExpression_.errorString();
@@ -286,7 +286,7 @@ MultiPatternMatcher::MultiPatternMatcher( const MultiRegularExpression& expressi
     , patterns_( expression.patterns_ )
 {
     const auto& config = Configuration::get();
-    if ( config.regexpEngine() != RegexpEngine::Hyperscan ) {
+    if ( config.regexpEngine() != RegexpEngine::Vectorscan ) {
         matcher_ = DefaultRegularExpressionMatcher( expression.patterns_ );
     }
 }

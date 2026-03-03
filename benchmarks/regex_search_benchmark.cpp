@@ -166,7 +166,7 @@ class ConfigGuard {
             config_.setRegexpEnging( RegexpEngine::QRegularExpression );
         }
         else if ( engine == QLatin1String( "vectorscan" ) ) {
-            config_.setRegexpEnging( RegexpEngine::Hyperscan );
+            config_.setRegexpEnging( RegexpEngine::Vectorscan );
         }
         else {
             throw std::runtime_error( QString( "Unknown engine: %1" ).arg( engine ).toStdString() );

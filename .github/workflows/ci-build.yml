@@ -42,40 +42,16 @@ jobs:
 
   Linux:
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
-    name: "Linux ${{ matrix.config.label }}"
+    name: "Linux ${{ matrix.config.label }} [${{ matrix.config.package_tag }}]"
     strategy:
       fail-fast: false
       matrix:
         config:
-          #- os: oraclelinux
-          #  os_version: 7
-          #  arch: x64
-          #  check_command: yum install -y --setopt tsflags=test /usr/local/klogg*.rpm
-          #  cpack_gen: RPM
-          #  artifacts_id: oracle7
-          #  package_suffix: rpm
-          #  check_container: oraclelinux:7
-          #  container_root: docker/oracle7
-          #  container: variar/klogg_oracle7
-          #  cmake_opts: -DKLOGG_USE_SENTRY=OFF -DKLOGG_USE_LTO=OFF -DKLOGG_USE_HYPERSCAN=OFF
-
-          - os: oraclelinux
-            os_version: 8
-            arch: x64
-            label: oraclelinux-8-rpm
-            check_command: yum install -y --setopt tsflags=test /usr/local/klogg*.rpm
-            cpack_gen: RPM
-            artifacts_id: oracle
-            package_suffix: rpm
-            check_container: oraclelinux:8
-            container_root: docker/oracle8
-            container: variar/klogg_oracle8
-            cmake_opts: -DCMAKE_BUILD_WITH_INSTALL_RPATH=on -DKLOGG_USE_VECTORSCAN=OFF -DKLOGG_USE_HYPERSCAN=ON
-          
           - os: ubuntu_jammy
             os_version: 22.04
             arch: x64
             label: ubuntu-22.04-deb
+            package_tag: vs-gen
             check_command: apt-get update && apt install --dry-run /usr/local/klogg*.deb
             cpack_gen: DEB
             artifacts_id: jammy
@@ -89,6 +65,7 @@ jobs:
             os_version: 24.04
             arch: x64
             label: ubuntu-24.04-deb
+            package_tag: vs-gen
             check_command: apt-get update && apt install --dry-run /usr/local/klogg*.deb
             cpack_gen: DEB
             artifacts_id: noble
@@ -102,6 +79,7 @@ jobs:
             os_version: 20.04
             arch: x64
             label: ubuntu-20.04-appimage
+            package_tag: vs-gen
             artifacts_id: appimage
             package_suffix: AppImage
             container_root: docker/ubuntu20.04
@@ -131,13 +109,13 @@ jobs:
 # Final upload of all packages
       - uses: actions/upload-artifact@v4
         with:
-          name: packages-${{ matrix.config.artifacts_id }}
+          name: packages-${{ matrix.config.artifacts_id }}-${{ matrix.config.package_tag }}
           path: '${{ env.KLOGG_BUILD_ROOT }}/packages/*'
           if-no-files-found: error      
 
   Mac:
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
-    name: "macOS ${{ matrix.config.label }}"
+    name: "macOS ${{ matrix.config.label }} [${{ matrix.config.package_tag }}]"
     strategy:
       fail-fast: false
       matrix:
@@ -149,6 +127,7 @@ jobs:
             qt_arch: clang_64
             arch: x64
             label: intel-qt6
+            package_tag: vs-gen
             artifacts_id: macos-intel-qt6
             cmake_opts: -DKLOGG_OSX_DEPLOYMENT_TARGET=15.0
           - os: macos-latest
@@ -158,6 +137,7 @@ jobs:
             qt_arch: clang_64
             arch: arm64
             label: arm64-qt6
+            package_tag: vs-arm64
             artifacts_id: macos-arm-qt6
             cmake_opts: -DKLOGG_OSX_DEPLOYMENT_TARGET=14.0
 
@@ -207,13 +187,13 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: packages-${{ matrix.config.artifacts_id }}
+          name: packages-${{ matrix.config.artifacts_id }}-${{ matrix.config.package_tag }}
           path: '${{ env.KLOGG_BUILD_ROOT }}/packages/*' 
           if-no-files-found: warn
 
   Windows:
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
-    name: "Windows ${{ matrix.config.label }}"
+    name: "Windows ${{ matrix.config.label }} [${{ matrix.config.package_tag }}]"
     strategy:
       fail-fast: false
       matrix:
@@ -226,7 +206,8 @@ jobs:
             qt_arch: win64_msvc2022_64
             arch: x64
             ssl_arch: -x64
-            cmake_opts: -DKLOGG_GENERIC_CPU=OFF -DKLOGG_USE_VECTORSCAN=ON -DKLOGG_USE_HYPERSCAN=OFF
+            package_tag: vs-avx2
+            cmake_opts: -DKLOGG_GENERIC_CPU=OFF -DKLOGG_USE_VECTORSCAN=ON
             label: x64-qt6
             artifacts_id: windows-x64-qt6
 
@@ -237,7 +218,8 @@ jobs:
             qt_archives: qtbase qtimageformats qttools qttranslations icu qtsvg
             qt_arch: win32_msvc2019
             arch: x86
-            cmake_opts: -DKLOGG_USE_SENTRY=OFF
+            package_tag: vs-gen
+            cmake_opts: -DKLOGG_USE_SENTRY=OFF -DKLOGG_GENERIC_CPU=ON -DKLOGG_USE_VECTORSCAN=ON
             label: x86-qt5
             artifacts_id: windows-x86-qt5
 
@@ -261,8 +243,7 @@ jobs:
       - name: Install PkgConfig
         run: choco install pkgconfiglite -y
 
-      - name: Setup MSYS2 and install Ragel (x64 only)
-        if: ${{ matrix.config.arch == 'x64' }}
+      - name: Setup MSYS2 and install Ragel
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -285,8 +266,7 @@ jobs:
         with:
           arch: ${{ matrix.config.arch }}
 
-      - name: Add MSYS2 toolchain to PATH (x64 only)
-        if: ${{ matrix.config.arch == 'x64' }}
+      - name: Add MSYS2 toolchain to PATH
         shell: pwsh
         run: |
           $msysBinCandidates = @(
@@ -308,16 +288,14 @@ jobs:
           Write-Host "Using ragel from $ragelPath"
           $msysBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Verify Ragel (x64 only)
-        if: ${{ matrix.config.arch == 'x64' }}
+      - name: Verify Ragel
         shell: pwsh
         run: |
           ragel -v
 
       - uses: ./.github/actions/agent-build
 
-      - name: Verify vectorscan config in CMake cache (x64 only)
-        if: ${{ matrix.config.arch == 'x64' }}
+      - name: Verify vectorscan config in CMake cache
         shell: pwsh
         run: |
           $cachePath = Join-Path $env:GITHUB_WORKSPACE "build_root\CMakeCache.txt"
@@ -327,11 +305,10 @@ jobs:
           }
 
           $vectorscan = Select-String -Path $cachePath -Pattern '^KLOGG_USE_VECTORSCAN:BOOL=ON$'
-          $hyperscan = Select-String -Path $cachePath -Pattern '^KLOGG_USE_HYPERSCAN:BOOL=OFF$'
-          if ( !$vectorscan -or !$hyperscan ) {
+          if ( !$vectorscan ) {
             Write-Host "Current regex backend values:"
-            Select-String -Path $cachePath -Pattern '^KLOGG_USE_VECTORSCAN:BOOL=|^KLOGG_USE_HYPERSCAN:BOOL=' | ForEach-Object { $_.Line }
-            Write-Error "Unexpected vectorscan/hyperscan CMake settings"
+            Select-String -Path $cachePath -Pattern '^KLOGG_USE_VECTORSCAN:BOOL=|^KLOGG_GENERIC_CPU:BOOL=' | ForEach-Object { $_.Line }
+            Write-Error "Unexpected vectorscan CMake settings"
             exit 1
           }
 
@@ -406,7 +383,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ steps.run-tests.outcome == 'success' }}
         with:
-          name: packages-${{ matrix.config.artifacts_id }}
+          name: packages-${{ matrix.config.artifacts_id }}-${{ matrix.config.package_tag }}
           path: '${{ env.KLOGG_BUILD_ROOT }}/packages/*'
           if-no-files-found: error
 

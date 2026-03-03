@@ -142,8 +142,8 @@ GNU General Public License,version 2.0 or later.
 GNU Lesser General Public License, version 2.1 or later.
 
 ===
-This product includes software developed by Intel Corporation
-Hyperscan (https://hyperscan.io) licensed
+This product includes software developed by VectorCamp and Intel Corporation
+Vectorscan (https://github.com/VectorCamp/vectorscan) licensed
 under the terms of the BSD License
 
 > Copyright (c) 2015, Intel Corporation

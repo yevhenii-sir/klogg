@@ -117,8 +117,8 @@ TEST_CASE( "Configured regex backend matches the built product", "[vectorscan][b
     auto& config = Configuration::getSynced();
     configureProductLikeRegexpEngine( config );
 
-#ifdef KLOGG_HAS_HS
-    REQUIRE( config.regexpEngine() == RegexpEngine::Hyperscan );
+#ifdef KLOGG_HAS_VECTORSCAN
+    REQUIRE( config.regexpEngine() == RegexpEngine::Vectorscan );
 #else
     REQUIRE( config.regexpEngine() == RegexpEngine::QRegularExpression );
 #endif

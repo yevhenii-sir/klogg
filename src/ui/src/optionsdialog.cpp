@@ -123,7 +123,7 @@ void OptionsDialog::setupTabs()
     minimizeToTrayCheckBox->setVisible( false );
 #endif
 
-#ifndef KLOGG_HAS_HS
+#ifndef KLOGG_HAS_VECTORSCAN
     regexpEngineLabel->setVisible( false );
     regexpEngineComboBox->setVisible( false );
 #endif
@@ -148,7 +148,7 @@ void OptionsDialog::setupRegexp()
     quickFindSearchBox->addItems( regexpTypes );
 
     QStringList regexpEngines;
-    regexpEngines << tr( "Hyperscan" ) << tr( "Qt" );
+    regexpEngines << tr( "Vectorscan" ) << tr( "Qt" );
 
     regexpEngineComboBox->addItems( regexpEngines );
 }
@@ -315,7 +315,7 @@ RegexpEngine OptionsDialog::getRegexpEngineFromIndex( int index ) const
         type = RegexpEngine::QRegularExpression;
         break;
     default:
-        type = RegexpEngine::Hyperscan;
+        type = RegexpEngine::Vectorscan;
         break;
     }
 

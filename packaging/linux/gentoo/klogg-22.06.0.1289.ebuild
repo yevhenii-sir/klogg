@@ -27,7 +27,6 @@ DEPEND="
 	dev-qt/qtnetwork:5
 	dev-qt/qtxml:5
 	dev-qt/qtconcurrent:5
-	>=dev-libs/hyperscan-5.4.0
 	>=dev-libs/xxhash-0.8.0
 	>=app-i18n/uchardet-0.0.7
 	>=dev-cpp/tbb-2021.5
@@ -38,6 +37,8 @@ RDEPEND="
 	x11-themes/hicolor-icon-theme
 "
 BDEPEND="
+	dev-libs/boost
+	dev-util/ragel
 	>=dev-cpp/robin-hood-hashing-3.11.5
 	test? ( dev-qt/qttest:5 >=dev-cpp/catch-2.13.8 )
 "

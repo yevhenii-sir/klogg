@@ -10,8 +10,8 @@ url='https://klogg.filimonov.dev'
 license=('GPL3')
 provides=('klogg')
 conflicts=('klogg-bin')
-depends=('qt5-base' 'hicolor-icon-theme' 'hyperscan' 'xxhash' 'uchardet' 'tbb')
-makedepends=('cmake' 'git')
+depends=('qt5-base' 'hicolor-icon-theme' 'xxhash' 'uchardet' 'tbb')
+makedepends=('boost' 'cmake' 'git' 'ragel')
 
 source=("${pkgname}-${pkgver}.tar.gz::https://github.com/variar/klogg/archive/refs/tags/v${pkgver}.tar.gz"
         "https://github.com/variar/klogg/releases/download/v${pkgver}/${pkgname}-${pkgver}.${_subversion}.deps.tar.gz")

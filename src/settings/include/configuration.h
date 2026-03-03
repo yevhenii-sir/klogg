@@ -56,7 +56,7 @@ enum class SearchRegexpType {
     FixedString,
 };
 
-enum class RegexpEngine { Hyperscan, QRegularExpression };
+enum class RegexpEngine { Vectorscan, QRegularExpression };
 
 enum class ThemeMode { Light, Dark, Auto };
 static constexpr int MAX_RECENT_FILES = 25;
@@ -616,7 +616,7 @@ class Configuration final : public Persistable<Configuration> {
 
     int scaleFactorRounding_ = 1;
 
-    RegexpEngine regexpEngine_ = RegexpEngine::Hyperscan;
+    RegexpEngine regexpEngine_ = RegexpEngine::Vectorscan;
 
     QColor qfBackColor_ = Qt::yellow;
     QColor mainSearchBackColor_ = Qt::lightGray;

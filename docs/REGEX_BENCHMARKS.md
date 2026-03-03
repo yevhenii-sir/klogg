@@ -45,9 +45,9 @@ The benchmark compares three engine/build variants:
 
 | Label | Build configuration | Runtime engine |
 | --- | --- | --- |
-| `qt` | `-DKLOGG_USE_VECTORSCAN=OFF -DKLOGG_USE_HYPERSCAN=OFF` | `QRegularExpression` |
-| `vectorscan-generic` | `-DKLOGG_USE_VECTORSCAN=ON -DKLOGG_USE_HYPERSCAN=OFF -DKLOGG_GENERIC_CPU=ON` | Vectorscan without AVX2/AVX512 codegen |
-| `vectorscan-avx` | `-DKLOGG_USE_VECTORSCAN=ON -DKLOGG_USE_HYPERSCAN=OFF -DKLOGG_GENERIC_CPU=OFF` | Vectorscan with the host's available AVX-enabled build |
+| `qt` | `-DKLOGG_USE_VECTORSCAN=OFF` | `QRegularExpression` |
+| `vectorscan-generic` | `-DKLOGG_USE_VECTORSCAN=ON -DKLOGG_GENERIC_CPU=ON` | Vectorscan without AVX2/AVX512 codegen |
+| `vectorscan-avx` | `-DKLOGG_USE_VECTORSCAN=ON -DKLOGG_GENERIC_CPU=OFF` | Vectorscan with the host's available AVX-enabled build |
 
 ## Runtime requirements
 

@@ -1036,8 +1036,8 @@
     </message>
     <message>
         <location filename="../../ui/src/optionsdialog.cpp" line="138"/>
-        <source>Hyperscan</source>
-        <translation>Hyperscan</translation>
+        <source>Vectorscan</source>
+        <translation>Vectorscan</translation>
     </message>
     <message>
         <location filename="../../ui/src/optionsdialog.cpp" line="138"/>

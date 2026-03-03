@@ -34,7 +34,7 @@ Klogg is a high-performance, cross-platform log file viewer built on Qt5/Qt6. It
 - **Framework**: Qt5/Qt6 (C++)
 - **Build System**: CMake
 - **Threading**: TBB (Threading Building Blocks)
-- **Regex Engine**: Hyperscan/Vectorscan (optional), Qt Regex (fallback)
+- **Regex Engine**: Vectorscan (optional), Qt Regex (fallback)
 - **Memory Allocator**: mimalloc (optional)
 - **Data Structures**: Roaring Bitmaps for match storage
 
@@ -411,7 +411,7 @@ LogFilteredData → LogFilteredDataWorker → SearchOperation → PatternMatcher
    - Block-based processing
 
 3. **Pattern Matching** (`PatternMatcher`)
-   - Hyperscan/Vectorscan (if available)
+   - Vectorscan (if available)
    - Qt Regex (fallback)
    - Boolean evaluation
 
@@ -439,7 +439,7 @@ Supports:
 
 ### Regex Engines
 
-1. **Hyperscan/Vectorscan** (preferred)
+1. **Vectorscan** (preferred)
    - SIMD-optimized
    - 2-4x faster than Qt Regex
    - Windows x64, Linux/macOS
@@ -475,7 +475,7 @@ Supports:
 **Performance Characteristics**:
 - Parallel search: 2-4x speedup
 - Cache hit: Near-instant results
-- Hyperscan: 2-4x faster than Qt Regex
+- Vectorscan: 2-4x faster than Qt Regex
 - Benchmark methodology and generated snapshots: [Regex Search Benchmarks](./REGEX_BENCHMARKS.md)
 
 ### Rendering Performance
@@ -515,7 +515,7 @@ Supports:
 
 **Build**:
 - MSVC or MinGW
-- Hyperscan support (x64 only)
+- Vectorscan support
 - Windows-specific resource files
 
 ### Linux
@@ -675,8 +675,7 @@ Supports:
 ### Build Options
 
 **Key Options**:
-- `KLOGG_USE_HYPERSCAN`: Enable Hyperscan (Windows x64)
-- `KLOGG_USE_VECTORSCAN`: Enable Vectorscan (Linux/macOS)
+- `KLOGG_USE_VECTORSCAN`: Enable Vectorscan
 - `KLOGG_USE_MIMALLOC`: Enable mimalloc
 - `KLOGG_USE_SENTRY`: Enable crash reporting
 - `KLOGG_BUILD_TESTS`: Build test suite
@@ -688,7 +687,7 @@ Supports:
 - CMake 3.12+
 
 **Optional**:
-- Hyperscan/Vectorscan
+- Vectorscan
 - mimalloc
 - Sentry
 
@@ -725,7 +724,7 @@ cmake --build build
 - Progress signals for long operations
 
 ### 3. Strategy Pattern
-- Regex engine selection (Hyperscan vs Qt)
+- Regex engine selection (Vectorscan vs Qt)
 - Platform-specific file I/O
 
 ### 4. Cache Pattern

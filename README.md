@@ -129,8 +129,8 @@ Package for Mac can be installed from Homebrew
 #### Linux
 It is recommended to use klogg package from distribution-specific [repositories](https://repology.org/project/klogg/versions).
 
-Generic packages are available from klogg DEB and RPM repositories hosted at GitHub Pages.
-They are built to run on Ubuntu 18.04/20.04/22.04 and Oracle Linux 7/8 (x86-64 only).
+Generic packages are available from the klogg DEB repository hosted at GitHub Pages.
+They are built to run on Ubuntu 22.04/24.04 (x86-64 only).
 
 For DEB packages first download the gpg key:
 ```
@@ -139,7 +139,7 @@ curl -sS https://klogg.filimonov.dev/klogg.gpg.key | gpg --dearmor | sudo tee /e
 
 You might need to manually create `/etc/apt/keyrings` directory.
 
-Then download the repository list file for you distribution (replace `<ubuntu_release>` with one of `bionic`, `focal`, `jammy`):
+Then download the repository list file for your distribution (replace `<ubuntu_release>` with `jammy` or `noble`):
 ```
 curl -sS https://klogg.filimonov.dev/deb/klogg.<ubuntu_release>.list | sudo tee /etc/apt/sources.list.d/klogg.list
 ```
@@ -153,17 +153,6 @@ sudo apt install klogg
 If there is already an entry for JFrogg hosted klogg repository in `/etc/apt/sources.list`, then remove this line from it:
 ```
 deb [trusted=yes] https://favpackage.jfrog.io/artifactory/klogg_deb/ <ubuntu_release> utils
-```
-
-For RPM download klogg repo file (replace `<oracle_release>` with one of `7`, `8`):
-```
-curl -sS https://klogg.filimonov.dev/rpm/klogg-oracle-<oracle_release>.repo | sudo tee /etc/yum.repos.d/klogg-rpm.repo
-```
-
-Then install using yum
-```
-sudo yum update
-sudo yum install klogg
 ```
 
 There is also an AppImage package that can be used without installation. To run klogg from AppImage, download the package and make in executable with either a file manager or terminal command `chmod +x <path_to_klogg_AppImage>` and then run the AppImage file.
@@ -210,7 +199,6 @@ All C++ dependencies are managed via [CPM](https://github.com/cpm-cmake/CPM.cmak
 |---|---|---|---|
 | [Qt](https://www.qt.io/) | 5 or 6 | System | GUI framework (Core, Widgets, Concurrent, Network, Xml, Svg) |
 | [Vectorscan](https://github.com/VectorCamp/vectorscan) | `d29730e` | `VectorCamp/vectorscan` | Regex acceleration (default engine) |
-| [Hyperscan](https://github.com/variar/hyperscan) | `0931a40` | `variar/hyperscan` | Regex engine (optional alternative) |
 | [Boost](https://www.boost.org/) | - | System | Required by Vectorscan |
 | [simdutf](https://github.com/simdutf/simdutf) | 5.6.2 | `simdutf/simdutf` | SIMD UTF-8 processing |
 | [CRoaring](https://github.com/RoaringBitmap/CRoaring) | 4.2.1 | `RoaringBitmap/CRoaring` | Compressed bitmaps |

@@ -50,8 +50,8 @@ runs:
       run: |
         echo "KLOGG_CODESIGN=Developer ID Application: Anton Filimonov (GAW773U324)" >> $GITHUB_ENV
         echo "KLOGG_INSTALLERSIGN=Developer ID Installer: Anton Filimonov (GAW773U324)" >> $GITHUB_ENV
-        echo "KLOGG_DMG=klogg-${{ env.KLOGG_VERSION }}-mac-${{ env.KLOGG_ARCH }}.dmg" >> $GITHUB_ENV
-        echo "KLOGG_PKG=klogg-${{ env.KLOGG_VERSION }}-mac-${{ env.KLOGG_ARCH }}.pkg" >> $GITHUB_ENV
+        echo "KLOGG_DMG=klogg-${{ env.KLOGG_VERSION }}-mac-${{ env.KLOGG_ARCH }}-${{ env.KLOGG_PACKAGE_TAG }}.dmg" >> $GITHUB_ENV
+        echo "KLOGG_PKG=klogg-${{ env.KLOGG_VERSION }}-mac-${{ env.KLOGG_ARCH }}-${{ env.KLOGG_PACKAGE_TAG }}.pkg" >> $GITHUB_ENV
 
     - name: Mac codesign binaries
       if: ${{ github.event_name != 'pull_request' && inputs.p12-file-base64 != '' }}

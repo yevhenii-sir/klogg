@@ -76,18 +76,7 @@ else()
   set(KLOGG_ARCH 64)
 endif()
 
-if(WIN32)
-  if(KLOGG_ARCH EQUAL 64)
-    option(KLOGG_USE_HYPERSCAN "Use Hyperscan" OFF)
-    option(KLOGG_USE_VECTORSCAN "Use Vectorscan" ON)
-  else()
-    option(KLOGG_USE_HYPERSCAN "Use Hyperscan" OFF)
-    option(KLOGG_USE_VECTORSCAN "Use Vectorscan" OFF)
-  endif()
-else()
-    option(KLOGG_USE_HYPERSCAN "Use Hyperscan" OFF)
-    option(KLOGG_USE_VECTORSCAN "Use Vectorscan" ON)
-endif()
+option(KLOGG_USE_VECTORSCAN "Use Vectorscan" ON)
 
 # BUILD_VERSION is already set above from environment variable or date
 # BUILD_NUMBER is extracted from BUILD_VERSION by prepare_version.cmake

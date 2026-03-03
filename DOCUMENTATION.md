@@ -89,11 +89,11 @@ Marks also appear as blue lines in the match overview.
 
 It is possible to quickly jump to a specific line using `Ctrl+L` shortcut.
 
-*klogg* uses Hyperscan library to perform regular expressions search. Hyperscan is very
-fast, but it doesn't support some patterns, most notably any lookahead is not supported 
-(check [hyperscan documentation](https://intel.github.io/hyperscan/dev-reference/compilation.html#pattern-support) for 
-supported syntax). To overcome this *klogg* will switch to Qt regular expression engine with full PCRE syntax support
-if Hyperscan can't handle the search pattern. However, in this case search will be significantly slower.
+*klogg* uses Vectorscan library to perform regular expressions search. Vectorscan is very
+fast, but it doesn't support some patterns, most notably any lookahead is not supported
+(check the Vectorscan syntax documentation for supported syntax). To overcome this
+*klogg* will switch to Qt regular expression engine with full PCRE syntax support if
+Vectorscan can't handle the search pattern. However, in this case search will be significantly slower.
 
 ### Opening files
 
@@ -487,4 +487,3 @@ Holding `Shift` while scrolling will scroll faster.
 |-l,--log           |save the log to a file                                    |
 |-f,--follow        |follow initial opened files                               |
 |-d,--debug         |output more debug (include multiple times for more verbosity e.g. -dddd) |
-

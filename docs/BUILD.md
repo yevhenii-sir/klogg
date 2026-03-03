@@ -29,9 +29,9 @@ To build Klogg:
   - QtXml
   - QtTools
 
-To build Hyperscan regular expressions backend (default):
+To build the Vectorscan regular expressions backend (default):
 
-- CPU with support for [SSSE3](https://en.wikipedia.org/wiki/SSSE3) instructions (for Hyperscan backend)
+- CPU with support for [SSSE3](https://en.wikipedia.org/wiki/SSSE3) instructions (for the Vectorscan backend)
 - Boost (1.58 or later, header-only part)
 - Ragel (6.8 or later; precompiled binary is provided for Windows; has to be installed from package managers on Linux or Homebrew on Mac)
 
@@ -46,7 +46,7 @@ Building tests:
 
 All other dependencies are provided by [CPM](https://github.com/cpm-cmake/CPM.cmake) during cmake configuration stage (see 3rdparty directory).
 
-CPM will try to find Hyperscan, TBB, uchardet and xxhash installed on build host.
+CPM will try to find Vectorscan, TBB, uchardet and xxhash installed on build host.
 If a library can't be found, the one provided by CPM will be used.
 
 ## Building
@@ -55,8 +55,9 @@ If a library can't be found, the one provided by CPM will be used.
 
 By default Klogg is built without support for reporting crash dumps. This can be enabled via cmake option `-DKLOGG_USE_SENTRY=ON`.
 
-Klogg uses Hyperscan regular expressions library which requires CPU with SSSE3 support, ragel and boost headers.
-Klogg can be built with only Qt reqular expressions backend by passing `-DKLOGG_USE_HYPERSCAN=OFF` to cmake.
+Klogg uses the Vectorscan regular expressions library which requires CPU with SSSE3 support,
+ragel and boost headers. Klogg can be built with only the Qt regular expressions backend by
+passing `-DKLOGG_USE_VECTORSCAN=OFF` to cmake.
 
 Klogg can use custom memory allocator. By default it uses TBB memory allocator for Windows, mimalloc on Linux and default system allocator on MacOS.
 Memory allocator override can be turned off by passing `-DKLOGG_OVERRIDE_MALLOC`. If you want to use TBB allocator on Linux then pass
@@ -186,8 +187,8 @@ brew install cmake ninja qt@6 boost ragel
 - `cmake`: Build system generator (requires version 3.12 or later)
 - `ninja`: Fast build tool
 - `qt@6`: Qt 6 libraries (project supports Qt 5.9+ or Qt 6, CI uses Qt 6.9.3)
-- `boost`: Boost C++ libraries (header-only part, for Hyperscan)
-- `ragel`: Ragel state machine compiler (version 6.8 or later, for Hyperscan)
+- `boost`: Boost C++ libraries (header-only part, for Vectorscan)
+- `ragel`: Ragel state machine compiler (version 6.8 or later, for Vectorscan)
 
 **Note:** If you already have Qt 5 installed, you can use Qt 5 instead. The project supports both Qt 5 and Qt 6.
 

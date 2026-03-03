@@ -8,7 +8,7 @@ runs:
       shell: sh
       run: |
         docker run -v "$KLOGG_WORKSPACE":/usr/local ${{ matrix.config.container }} /bin/bash -c "cd /usr/local/build_root && cpack -G ${{ matrix.config.cpack_gen }} "
-        docker run --env KLOGG_VERSION=$KLOGG_VERSION -v "$KLOGG_WORKSPACE":/usr/local ${{ matrix.config.container }} /bin/bash -c "cd /usr/local/build_root && mv ./packages/klogg-$KLOGG_VERSION-Linux.${{ matrix.config.package_suffix }} ./packages/klogg-$KLOGG_VERSION-${{ matrix.config.artifacts_id }}.${{ matrix.config.package_suffix }}"
+        docker run --env KLOGG_VERSION=$KLOGG_VERSION --env KLOGG_PACKAGE_TAG=$KLOGG_PACKAGE_TAG -v "$KLOGG_WORKSPACE":/usr/local ${{ matrix.config.container }} /bin/bash -c "cd /usr/local/build_root && mv ./packages/klogg-$KLOGG_VERSION-Linux.${{ matrix.config.package_suffix }} ./packages/klogg-$KLOGG_VERSION-${{ matrix.config.artifacts_id }}-$KLOGG_PACKAGE_TAG.${{ matrix.config.package_suffix }}"
 
     - name: Check package
       if: ${{ matrix.config.check_command }}
@@ -26,8 +26,8 @@ runs:
       shell: sh
       run: |
         docker run -v "$KLOGG_WORKSPACE":/usr/local ${{ matrix.config.container }} /bin/bash -c "cd /usr/local/build_root && xz ./output/klogg.debug"
-        docker run -v "$KLOGG_WORKSPACE":/usr/local ${{ matrix.config.container }} /bin/bash -c "cd /usr/local/build_root && mv ./output/klogg.debug.xz ./packages/klogg_${{ matrix.config.artifacts_id }}.debug.xz"
-        docker run -v "$KLOGG_WORKSPACE":/usr/local ${{ matrix.config.container }} /bin/bash -c "cd /usr/local/build_root && cp ./output/klogg ./packages/klogg_${{ matrix.config.artifacts_id }}"
+        docker run --env KLOGG_PACKAGE_TAG=$KLOGG_PACKAGE_TAG -v "$KLOGG_WORKSPACE":/usr/local ${{ matrix.config.container }} /bin/bash -c "cd /usr/local/build_root && mv ./output/klogg.debug.xz ./packages/klogg_${{ matrix.config.artifacts_id }}_$KLOGG_PACKAGE_TAG.debug.xz"
+        docker run --env KLOGG_PACKAGE_TAG=$KLOGG_PACKAGE_TAG -v "$KLOGG_WORKSPACE":/usr/local ${{ matrix.config.container }} /bin/bash -c "cd /usr/local/build_root && cp ./output/klogg ./packages/klogg_${{ matrix.config.artifacts_id }}_$KLOGG_PACKAGE_TAG"
 
     - name: Copy deps
       if: ${{ matrix.config.os == 'ubuntu_appimage' }}

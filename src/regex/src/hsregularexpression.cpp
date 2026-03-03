@@ -25,7 +25,7 @@
 #include <qregularexpression.h>
 #include <string_view>
 
-#ifdef KLOGG_HAS_HS
+#ifdef KLOGG_HAS_VECTORSCAN
 #include "hsregularexpression.h"
 
 #include "cpu_info.h"

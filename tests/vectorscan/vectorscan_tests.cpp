@@ -597,8 +597,8 @@ TEST_CASE( "Product-like backend is active in vectorscan test binary", "[vectors
     auto& config = Configuration::getSynced();
     configureProductLikeRegexpEngine( config );
 
-#ifdef KLOGG_HAS_HS
-    REQUIRE( config.regexpEngine() == RegexpEngine::Hyperscan );
+#ifdef KLOGG_HAS_VECTORSCAN
+    REQUIRE( config.regexpEngine() == RegexpEngine::Vectorscan );
 #else
     REQUIRE( config.regexpEngine() == RegexpEngine::QRegularExpression );
 #endif
