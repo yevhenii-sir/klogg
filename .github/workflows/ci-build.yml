@@ -466,10 +466,57 @@ jobs:
           find ./packages-all -type f ! \( -name "*.dmg" -o -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" -o -name "*.txt" -o -name "*.xz" -o -name "*.tar.xz" \) -delete 2>/dev/null || true
 
       - name: Delete existing continuous release
+        if: env.GITHUB_TOKEN != ''
         env:
           GITHUB_TOKEN: ${{ secrets.KLOGG_GITHUB_TOKEN }}
         run: |
-          gh release delete continuous --cleanup-tag --yes || true
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          tag="continuous"
+
+          release_id=""
+          if release_id_value="$(gh api "/repos/${repo}/releases/tags/${tag}" --jq '.id' 2>/tmp/gh_release_lookup_err)"; then
+            release_id="${release_id_value}"
+          elif grep -q "404" /tmp/gh_release_lookup_err; then
+            echo "No existing release for tag ${tag}"
+          else
+            cat /tmp/gh_release_lookup_err
+            exit 1
+          fi
+          rm -f /tmp/gh_release_lookup_err
+
+          if [ -n "${release_id}" ]; then
+            echo "Deleting existing release id ${release_id} for tag ${tag}"
+            gh api -X DELETE "/repos/${repo}/releases/${release_id}"
+          fi
+
+          # Delete the tag reference so the next release always points to this run's commit.
+          # GitHub Delete a reference returns:
+          # - 204: deleted
+          # - 422: ref is already absent / unprocessable (safe to continue)
+          # - 409: conflict (fail the job)
+          tag_delete_headers="$(gh api -i --silent -X DELETE "/repos/${repo}/git/refs/tags/${tag}" 2>/tmp/gh_tag_delete_err || true)"
+          tag_delete_status="$(printf '%s\n' "${tag_delete_headers}" | awk 'toupper($1) ~ /^HTTP/ { status=$2 } END { print status }')"
+
+          case "${tag_delete_status}" in
+            204)
+              echo "Deleted tag reference ${tag}"
+              ;;
+            422)
+              echo "Tag reference ${tag} is already absent or cannot be deleted (422); continuing"
+              ;;
+            409)
+              echo "Conflict while deleting tag reference ${tag}"
+              cat /tmp/gh_tag_delete_err
+              exit 1
+              ;;
+            *)
+              echo "Unexpected response while deleting tag reference ${tag}: status=${tag_delete_status:-unknown}"
+              cat /tmp/gh_tag_delete_err
+              exit 1
+              ;;
+          esac
+          rm -f /tmp/gh_tag_delete_err
 
       - name: Create pre-release (continuous)
         if: env.GITHUB_TOKEN != ''
@@ -477,6 +524,7 @@ jobs:
         with:
           token: ${{ secrets.KLOGG_GITHUB_TOKEN }}
           tag_name: continuous
+          target_commitish: ${{ github.sha }}
           name: Continuous Build ${{ env.KLOGG_VERSION }}
           body: |
             Continuous build ${{ env.KLOGG_VERSION }}
@@ -489,3 +537,31 @@ jobs:
           files: |
             ./packages-all/**/*
           draft: false
+
+      - name: Enforce continuous release flags
+        if: env.GITHUB_TOKEN != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.KLOGG_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          release_id="$(gh api "/repos/${repo}/releases/tags/continuous" --jq '.id')"
+          gh api -X PATCH "/repos/${repo}/releases/${release_id}" \
+            -f draft=false \
+            -f prerelease=true >/dev/null
+
+      - name: Verify continuous release flags
+        if: env.GITHUB_TOKEN != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.KLOGG_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          draft="$(gh api "/repos/${repo}/releases/tags/continuous" --jq '.draft')"
+          prerelease="$(gh api "/repos/${repo}/releases/tags/continuous" --jq '.prerelease')"
+
+          echo "continuous release flags: draft=${draft} prerelease=${prerelease}"
+          if [ "${draft}" != "false" ] || [ "${prerelease}" != "true" ]; then
+            gh api "/repos/${repo}/releases/tags/continuous" --jq '{id,tag_name,html_url,draft,prerelease,target_commitish}'
+            exit 1
+          fi

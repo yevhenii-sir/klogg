@@ -36,6 +36,12 @@ void configureTestTempDir()
 {
     const auto tempDir = QDir::cleanPath( QDir::currentPath() + QDir::separator()
                                           + QLatin1String( "test_tmp" ) );
+
+    QDir tempDirectory{ tempDir };
+    if ( tempDirectory.exists() ) {
+        tempDirectory.removeRecursively();
+    }
+
     QDir{}.mkpath( tempDir );
 
     const auto tempDirUtf8 = QDir::toNativeSeparators( tempDir ).toUtf8();

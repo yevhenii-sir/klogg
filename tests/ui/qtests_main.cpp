@@ -25,6 +25,10 @@
 #include <QMetaType>
 #include <QtConcurrent>
 
+#if defined( Q_OS_UNIX )
+#include <sys/resource.h>
+#endif
+
 #include <configuration.h>
 #include <linetypes.h>
 #include <highlighterset.h>
@@ -42,12 +46,37 @@ void configureTestTempDir()
     // direct runs and CTest runs use the same temp-file location.
     const auto tempDir = QDir::cleanPath( QCoreApplication::applicationDirPath() + QDir::separator()
                                           + QLatin1String( "test_tmp" ) );
+
+    // Keep UI tests deterministic in local reruns: stale files from previous runs
+    // can accumulate native watcher resources and hit low per-process fd limits.
+    QDir tempDirectory{ tempDir };
+    if ( tempDirectory.exists() ) {
+        tempDirectory.removeRecursively();
+    }
+
     QDir{}.mkpath( tempDir );
 
     const auto tempDirUtf8 = QDir::toNativeSeparators( tempDir ).toUtf8();
     qputenv( "TMP", tempDirUtf8 );
     qputenv( "TEMP", tempDirUtf8 );
     qputenv( "TMPDIR", tempDirUtf8 );
+}
+
+void configureTestFdLimit()
+{
+#if defined( Q_OS_UNIX )
+    constexpr rlim_t DesiredFdLimit = 1024;
+
+    rlimit fdLimit{};
+    if ( getrlimit( RLIMIT_NOFILE, &fdLimit ) == 0 ) {
+        const rlim_t targetLimit
+            = ( fdLimit.rlim_max < DesiredFdLimit ) ? fdLimit.rlim_max : DesiredFdLimit;
+        if ( targetLimit > fdLimit.rlim_cur ) {
+            fdLimit.rlim_cur = targetLimit;
+            (void)setrlimit( RLIMIT_NOFILE, &fdLimit );
+        }
+    }
+#endif
 }
 } // namespace
 
@@ -91,6 +120,7 @@ int main( int argc, char* argv[] )
 
     logging::enableLogging( true, logging::LogLevel::Warning );
     configureTestTempDir();
+    configureTestFdLimit();
 
     qRegisterMetaType<LinesCount>( "LinesCount" );
     qRegisterMetaType<LineNumber>( "LineNumber" );

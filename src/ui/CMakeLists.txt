@@ -27,6 +27,7 @@ add_library(
   ${CMAKE_CURRENT_SOURCE_DIR}/include/quickfind.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/quickfindmux.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/quickfindpattern.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/quicklabelpattern.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/quickfindwidget.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/recentfiles.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/savedsearches.h
@@ -80,6 +81,7 @@ add_library(
   ${CMAKE_CURRENT_SOURCE_DIR}/src/quickfind.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/quickfindmux.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/quickfindpattern.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/quicklabelpattern.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/quickfindwidget.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/recentfiles.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/savedsearches.cpp

@@ -94,6 +94,7 @@
 #include "overview.h"
 #include "quickfind.h"
 #include "quickfindpattern.h"
+#include "quicklabelpattern.h"
 #include "regularexpressionpattern.h"
 #include "shortcuts.h"
 
@@ -105,17 +106,6 @@ bool quickLabelMatchesText( const QuickLabelEntry& entry, const QString& text )
         = entry.ignoreCase ? Qt::CaseInsensitive : Qt::CaseSensitive;
     return QString::compare( entry.text, text, sensitivity ) == 0;
 }
-
-QString quickLabelPattern( const QuickLabelEntry& entry )
-{
-    const auto escapedText = QRegularExpression::escape( entry.text );
-    if ( entry.wholeWord ) {
-        return QStringLiteral( "\\b%1\\b" ).arg( escapedText );
-    }
-
-    return escapedText;
-}
-
 } // namespace
 
 #ifdef Q_OS_WIN
@@ -608,6 +598,7 @@ void AbstractLogView::mousePressEvent( QMouseEvent* mouseEvent )
         highlightersMenu_->populateHighlightersMenu();
         highlightersMenu_->setApplyChange( [ this ]() { Q_EMIT highlightersChange(); } );
 
+        QActionGroup* colorLablesActionGroup = nullptr;
         colorLabelsMenu_->clear();
         colorLabelsMenu_->setEnabled( selection_.isPortion() || selection_.isSingleLine() );
         if ( colorLabelsMenu_->isEnabled() ) {
@@ -623,7 +614,7 @@ void AbstractLogView::mousePressEvent( QMouseEvent* mouseEvent )
                 }
             }
 
-            auto colorLablesActionGroup = new QActionGroup( colorLabelsMenu_ );
+            colorLablesActionGroup = new QActionGroup( colorLabelsMenu_ );
             colorLablesActionGroup->setExclusive( true );
             connect( colorLablesActionGroup, &QActionGroup::triggered, this,
                      &AbstractLogView::setColorLabel );
@@ -687,6 +678,9 @@ void AbstractLogView::mousePressEvent( QMouseEvent* mouseEvent )
         popupMenu_->exec( QCursor::pos( activeScreen( this ) ) );
 
         highlightersMenu_->clearHighlightersMenu();
+        if ( colorLablesActionGroup != nullptr ) {
+            colorLablesActionGroup->deleteLater();
+        }
     }
 
     Q_EMIT activity();
@@ -2875,7 +2869,7 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
         std::transform( quickHighlighters_[ i ].begin(), quickHighlighters_[ i ].end(),
                         std::back_inserter( additionalHighlighters ),
                         [ quickHighlighter ]( const auto& entry ) {
-                            Highlighter h{ quickLabelPattern( entry ), entry.ignoreCase, true,
+                            Highlighter h{ quicklabel::pattern( entry ), entry.ignoreCase, true,
                                            quickHighlighter.color.foreColor,
                                            quickHighlighter.color.backColor };
                             h.setUseRegex( true );

@@ -5,6 +5,7 @@ add_executable(klogg_tests
     highlighter_vectorscan_test.cpp
     linepositionarray_test.cpp
     patternmatcher_test.cpp
+    quicklabelpattern_test.cpp
     sessioninfo_test.cpp
     tabgroupdropresolver_test.cpp
     tabgroupmanager_test.cpp
