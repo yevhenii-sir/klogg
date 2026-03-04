@@ -298,7 +298,22 @@ endif()
 add_subdirectory(website)
 
 enable_testing()
-add_test(NAME klogg_smoke COMMAND klogg -platform offscreen -v)
+
+function(klogg_add_runtime_test test_name target)
+  if(WIN32)
+    add_test(
+      NAME ${test_name}
+      COMMAND
+        ${CMAKE_COMMAND} -E env
+        "PATH=$<TARGET_FILE_DIR:${target}>$<SEMICOLON>$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>$<SEMICOLON>$ENV{PATH}"
+        $<TARGET_FILE:${target}> -platform offscreen ${ARGN}
+    )
+  else()
+    add_test(NAME ${test_name} COMMAND ${target} -platform offscreen ${ARGN})
+  endif()
+endfunction()
+
+klogg_add_runtime_test(klogg_smoke klogg -v)
 
 if(${KLOGG_BUILD_TESTS})
   add_subdirectory(tests)

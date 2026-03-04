@@ -44,10 +44,10 @@ runs:
     - name: Win package
       shell: cmd
       run: |
-        md %KLOGG_BUILD_ROOT%\packages
-        xcopy klogg-%KLOGG_VERSION%-%KLOGG_ARCH%-%KLOGG_QT%-portable.zip %KLOGG_BUILD_ROOT%\packages\klogg-%KLOGG_VERSION%-%KLOGG_ARCH%-%KLOGG_QT%-%KLOGG_PACKAGE_TAG%-portable.zip /y
-        xcopy klogg-%KLOGG_VERSION%-%KLOGG_ARCH%-%KLOGG_QT%-pdb.zip %KLOGG_BUILD_ROOT%\packages\klogg-%KLOGG_VERSION%-%KLOGG_ARCH%-%KLOGG_QT%-%KLOGG_PACKAGE_TAG%-pdb.zip /y
-        xcopy klogg-%KLOGG_VERSION%-%KLOGG_ARCH%-%KLOGG_QT%-setup.exe %KLOGG_BUILD_ROOT%\packages\klogg-%KLOGG_VERSION%-%KLOGG_ARCH%-%KLOGG_QT%-%KLOGG_PACKAGE_TAG%-setup.exe /y
+        if not exist "%KLOGG_BUILD_ROOT%\packages" md "%KLOGG_BUILD_ROOT%\packages"
+        copy /y "klogg-%KLOGG_VERSION%-%KLOGG_ARCH%-%KLOGG_QT%-portable.zip" "%KLOGG_BUILD_ROOT%\packages\klogg-%KLOGG_VERSION%-%KLOGG_ARCH%-%KLOGG_QT%-%KLOGG_PACKAGE_TAG%-portable.zip"
+        copy /y "klogg-%KLOGG_VERSION%-%KLOGG_ARCH%-%KLOGG_QT%-pdb.zip" "%KLOGG_BUILD_ROOT%\packages\klogg-%KLOGG_VERSION%-%KLOGG_ARCH%-%KLOGG_QT%-%KLOGG_PACKAGE_TAG%-pdb.zip"
+        copy /y "klogg-%KLOGG_VERSION%-%KLOGG_ARCH%-%KLOGG_QT%-setup.exe" "%KLOGG_BUILD_ROOT%\packages\klogg-%KLOGG_VERSION%-%KLOGG_ARCH%-%KLOGG_QT%-%KLOGG_PACKAGE_TAG%-setup.exe"
 
     #- name: Win codesign installer
     #  if: ${{ github.event_name != 'pull_request' }}

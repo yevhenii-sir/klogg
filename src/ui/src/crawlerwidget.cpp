@@ -1448,6 +1448,10 @@ void CrawlerWidget::setup()
 
     connect( logMainView_, &AbstractLogView::addColorLabel, this,
              &CrawlerWidget::addColorLabelToSelection );
+    connect( logMainView_, &AbstractLogView::removeColorLabel, this,
+             &CrawlerWidget::removeColorLabelFromSelection );
+    connect( logMainView_, &AbstractLogView::quickColorLabelDefaultsChanged, this,
+             &CrawlerWidget::setQuickColorLabelDefaults );
 
     connect( logMainView_, &AbstractLogView::sendSelectionToScratchpad, this,
              [ this ]() { Q_EMIT sendToScratchpad( logMainView_->getSelectedText() ); } );
@@ -1568,6 +1572,10 @@ void CrawlerWidget::connectAllFilteredViewSlots( FilteredView* view )
 
     connect( view, &AbstractLogView::addColorLabel, this,
              &CrawlerWidget::addColorLabelToSelection );
+    connect( view, &AbstractLogView::removeColorLabel, this,
+             &CrawlerWidget::removeColorLabelFromSelection );
+    connect( view, &AbstractLogView::quickColorLabelDefaultsChanged, this,
+             &CrawlerWidget::setQuickColorLabelDefaults );
 
     connect( view, &AbstractLogView::sendSelectionToScratchpad, this,
              [ view, this ]() { Q_EMIT sendToScratchpad( view->getSelectedText() ); } );
@@ -1906,17 +1914,32 @@ void CrawlerWidget::changeTopViewSize( int32_t delta )
 
 void CrawlerWidget::addColorLabelToSelection( size_t label )
 {
-    updateColorLabels( colorLabelsManager_.setColorLabel( label, getSelectedText() ) );
+    updateColorLabels( colorLabelsManager_.setColorLabel(
+        label, getSelectedText(), HighlighterSetCollection::get().quickHighlighterDefaults() ) );
 }
 
 void CrawlerWidget::addNextColorLabelToSelection()
 {
-    updateColorLabels( colorLabelsManager_.setNextColorLabel( getSelectedText() ) );
+    updateColorLabels( colorLabelsManager_.setNextColorLabel(
+        getSelectedText(), HighlighterSetCollection::get().quickHighlighterDefaults() ) );
+}
+
+void CrawlerWidget::removeColorLabelFromSelection()
+{
+    updateColorLabels( colorLabelsManager_.removeColorLabel( getSelectedText() ) );
 }
 
 void CrawlerWidget::clearColorLabels()
 {
     updateColorLabels( colorLabelsManager_.clear() );
+}
+
+void CrawlerWidget::setQuickColorLabelDefaults( bool ignoreCase, bool wholeWord )
+{
+    auto& highlighterSetCollection = HighlighterSetCollection::get();
+    highlighterSetCollection.setQuickHighlighterDefaults(
+        QuickHighlighterDefaults{ ignoreCase, wholeWord } );
+    highlighterSetCollection.save();
 }
 
 void CrawlerWidget::updateColorLabels(

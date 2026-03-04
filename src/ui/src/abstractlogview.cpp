@@ -61,6 +61,7 @@
 #include <vector>
 
 #include <QApplication>
+#include <QActionGroup>
 #include <QClipboard>
 #include <QFileDialog>
 #include <QFontMetrics>
@@ -95,6 +96,27 @@
 #include "quickfindpattern.h"
 #include "regularexpressionpattern.h"
 #include "shortcuts.h"
+
+namespace {
+
+bool quickLabelMatchesText( const QuickLabelEntry& entry, const QString& text )
+{
+    const auto sensitivity
+        = entry.ignoreCase ? Qt::CaseInsensitive : Qt::CaseSensitive;
+    return QString::compare( entry.text, text, sensitivity ) == 0;
+}
+
+QString quickLabelPattern( const QuickLabelEntry& entry )
+{
+    const auto escapedText = QRegularExpression::escape( entry.text );
+    if ( entry.wholeWord ) {
+        return QStringLiteral( "\\b%1\\b" ).arg( escapedText );
+    }
+
+    return escapedText;
+}
+
+} // namespace
 
 #ifdef Q_OS_WIN
 
@@ -586,31 +608,36 @@ void AbstractLogView::mousePressEvent( QMouseEvent* mouseEvent )
         highlightersMenu_->populateHighlightersMenu();
         highlightersMenu_->setApplyChange( [ this ]() { Q_EMIT highlightersChange(); } );
 
-        auto colorLablesActionGroup = new QActionGroup( this );
-        connect( colorLablesActionGroup, &QActionGroup::triggered, this,
-                 &AbstractLogView::setColorLabel );
         colorLabelsMenu_->clear();
         colorLabelsMenu_->setEnabled( selection_.isPortion() || selection_.isSingleLine() );
         if ( colorLabelsMenu_->isEnabled() ) {
-            auto selectedText = selection_.getSelectedText( logData_ );
+            const auto selectedText = selection_.getSelectedText( logData_ );
             std::optional<size_t> currentLabel;
             for ( auto i = 0u; i < quickHighlighters_.size(); ++i ) {
-                if ( quickHighlighters_[ i ].contains( selectedText ) ) {
+                if ( std::any_of( quickHighlighters_[ i ].cbegin(), quickHighlighters_[ i ].cend(),
+                                  [ &selectedText ]( const auto& entry ) {
+                                      return quickLabelMatchesText( entry, selectedText );
+                                  } ) ) {
                     currentLabel = i;
                     break;
                 }
             }
 
+            auto colorLablesActionGroup = new QActionGroup( colorLabelsMenu_ );
+            colorLablesActionGroup->setExclusive( true );
+            connect( colorLablesActionGroup, &QActionGroup::triggered, this,
+                     &AbstractLogView::setColorLabel );
+
             auto noneAction = colorLabelsMenu_->addAction( tr( "None" ) );
             noneAction->setActionGroup( colorLablesActionGroup );
             noneAction->setCheckable( true );
             noneAction->setChecked( !currentLabel.has_value() );
-            if ( currentLabel ) {
-                noneAction->setData( static_cast<unsigned>( *currentLabel ) );
-            }
+            noneAction->setProperty( "removeColorLabel", true );
 
             const auto& quickHighlightersConfiguration
                 = HighlighterSetCollection::get().quickHighlighters();
+            const auto quickHighlighterDefaults
+                = HighlighterSetCollection::get().quickHighlighterDefaults();
 
             colorLabelsMenu_->addSeparator();
             const auto maxLabel
@@ -634,16 +661,32 @@ void AbstractLogView::mousePressEvent( QMouseEvent* mouseEvent )
                 colorLabelAction->setIcon( QIcon( pixmap ) );
                 colorLabelAction->setIconVisibleInMenu( true );
             }
+
             colorLabelsMenu_->addSeparator();
-            auto clearAllAction = colorLabelsMenu_->addAction( tr( "Clear all" ) );
-            connect( clearAllAction, &QAction::triggered, this,
-                     &AbstractLogView::clearColorLabels );
+
+            auto ignoreCaseAction = colorLabelsMenu_->addAction( tr( "Ignore case" ) );
+            ignoreCaseAction->setCheckable( true );
+            ignoreCaseAction->setChecked( quickHighlighterDefaults.ignoreCase );
+
+            auto wholeWordAction = colorLabelsMenu_->addAction( tr( "Whole word" ) );
+            wholeWordAction->setCheckable( true );
+            wholeWordAction->setChecked( quickHighlighterDefaults.wholeWord );
+
+            connect( ignoreCaseAction, &QAction::toggled, this,
+                     [ this, ignoreCaseAction, wholeWordAction ]( bool ) {
+                         Q_EMIT quickColorLabelDefaultsChanged( ignoreCaseAction->isChecked(),
+                                                                wholeWordAction->isChecked() );
+                     } );
+            connect( wholeWordAction, &QAction::toggled, this,
+                     [ this, ignoreCaseAction, wholeWordAction ]( bool ) {
+                         Q_EMIT quickColorLabelDefaultsChanged( ignoreCaseAction->isChecked(),
+                                                                wholeWordAction->isChecked() );
+                     } );
         }
         // Display the popup (blocking)
         popupMenu_->exec( QCursor::pos( activeScreen( this ) ) );
 
         highlightersMenu_->clearHighlightersMenu();
-        colorLablesActionGroup->deleteLater();
     }
 
     Q_EMIT activity();
@@ -1140,9 +1183,8 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
     if ( pendingScrollBarUpdate_ ) {
         pendingScrollBarUpdate_ = false;
         LOG_DEBUG << "[TextWrap:Paint] Scheduling deferred scrollbar update after paintEvent()";
-        // Defer the call using Qt::QueuedConnection to execute after paintEvent() completes
-        // This prevents reentrancy and ensures the call happens when it's safe
-        QMetaObject::invokeMethod( this, "updateScrollBars", Qt::QueuedConnection );
+        // Defer the call using Qt::QueuedConnection to execute after paintEvent() completes.
+        QMetaObject::invokeMethod( this, [ this ] { updateScrollBars(); }, Qt::QueuedConnection );
     }
 
     // Height including the potentially invisible last line
@@ -1162,12 +1204,14 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
     }
 
     QPainter devicePainter( viewport() );
-    int drawingTopPosition = -pullToFollowHeight;
-    
+
     // Calculate effective height for text wrapping and pull-to-follow bar positioning
-    const int effectiveHeight = ( useTextWrap_ && textAreaCache_.actual_height_ > 0 ) 
-        ? textAreaCache_.actual_height_ 
-        : wholeHeight;
+    const int effectiveHeight
+        = ( useTextWrap_ && textAreaCache_.actual_height_ > 0 ) ? textAreaCache_.actual_height_
+                                                                 : wholeHeight;
+
+    drawingTopOffset_ = -pullToFollowHeight;
+    int drawingTopPosition = drawingTopOffset_;
     // Keep pull-to-follow within viewport to avoid blank/gray regions.
     int drawingPullToFollowTopPosition
         = std::min( drawingTopPosition + effectiveHeight, viewport()->height() );
@@ -1178,68 +1222,26 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
     if ( followElasticHook_.isHooked()
          && ( logData_->getNbLine() + LinesCount( 1 ) < getNbVisibleLines() ) ) {
         drawingTopOffset_ = 0;
-        drawingTopPosition += ( wholeHeight - viewport()->height() ) + PullToFollowHookedHeight;
+        drawingTopPosition = ( wholeHeight - viewport()->height() ) + PullToFollowHookedHeight;
         drawingPullToFollowTopPosition
             = std::min( drawingTopPosition + viewport()->height() - PullToFollowHookedHeight,
                         viewport()->height() );
     }
-    // This is the case where the user is on the 'extra' slot at the end
-    // and is aligned on the last line (but no elastic shown)
-    else if ( lastLineAligned_ && !followElasticHook_.isHooked() ) {
-        // Use actual drawn height when text wrapping is enabled to handle variable line heights
-        // Ensure actual_height_ is valid (> 0) before using it; fall back to wholeHeight otherwise
-        // Calculate offset to align bottom of content with bottom of viewport
-        // If effectiveHeight <= viewport height, no negative offset needed (content fits)
-        if ( effectiveHeight > viewport()->height() ) {
-            drawingTopOffset_ = -( effectiveHeight - viewport()->height() );
-        }
-        else {
-            // Content fits in viewport - no shift needed, but we're still "bottom aligned"
-            drawingTopOffset_ = 0;
-        }
-        drawingTopPosition += drawingTopOffset_;
-        // Use actual_height_ for pull-to-follow position when text wrapping is enabled
-        // to ensure shadow is positioned correctly relative to wrapped content
-        // effectiveHeight may be stale (calculated before drawTextArea() updates actual_height_)
+    else if ( shouldBottomAlignFrame() && !followElasticHook_.isHooked() ) {
+        const int hiddenHeightPx
+            = std::max( 0, effectiveHeight - viewport()->height() );
+        drawingTopOffset_ = -alignHiddenHeightToLineGrid( hiddenHeightPx );
+        drawingTopPosition = drawingTopOffset_;
+
         const int heightForPullToFollow = ( useTextWrap_ && textAreaCache_.actual_height_ > 0 )
             ? textAreaCache_.actual_height_
             : effectiveHeight;
         drawingPullToFollowTopPosition
             = std::min( drawingTopPosition + heightForPullToFollow, viewport()->height() );
     }
-    // Bug fix: When text wrap is enabled and actual_height_ exceeds viewport height,
-    // we need to apply bottom alignment offset even if lastLineAligned_ is false.
-    // This happens when wrapped content exceeds viewport but scroll position hasn't
-    // triggered bottom alignment mode yet (e.g., firstLine_=0 with wrapped content).
-    // Bug fix 8: When followMode_ is enabled, always apply bottom alignment for wrapped content
-    // to ensure the last line is fully visible in FilteredView.
-    else if ( useTextWrap_ && !followElasticHook_.isHooked()
-              && textAreaCache_.actual_height_ > 0
-              && textAreaCache_.actual_height_ > viewport()->height() ) {
-        // Only auto bottom-align when we are actually at the bottom of the scroll range.
-        // "Near end of file" based on logical line counts is not reliable in wrap mode and can
-        // incorrectly hide the requested line after jump-to-selection (click in FilteredView).
-        const auto scrollValue = verticalScrollBar()->value();
-        const auto scrollMax = verticalScrollBar()->maximum();
-        const bool atScrollBottom = ( scrollValue >= scrollMax );
-        const bool shouldApplyBottomAlignment = followMode_ || lastLineAligned_ || atScrollBottom;
-
-        if ( shouldApplyBottomAlignment ) {
-            // Apply bottom alignment offset to show the bottom of wrapped content
-            drawingTopOffset_ = -( textAreaCache_.actual_height_ - viewport()->height() );
-            drawingTopPosition += drawingTopOffset_;
-            drawingPullToFollowTopPosition
-                = std::min( drawingTopPosition + textAreaCache_.actual_height_, viewport()->height() );
-        }
-        else {
-            drawingTopOffset_ = -pullToFollowHeight;
-            // Update pull-to-follow position using effective height
-            drawingPullToFollowTopPosition
-                = std::min( drawingTopPosition + effectiveHeight, viewport()->height() );
-        }
-    }
     else {
         drawingTopOffset_ = -pullToFollowHeight;
+        drawingTopPosition = drawingTopOffset_;
         // Update pull-to-follow position using effective height
         drawingPullToFollowTopPosition
             = std::min( drawingTopPosition + effectiveHeight, viewport()->height() );
@@ -1256,6 +1258,30 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
               << std::chrono::duration_cast<std::chrono::microseconds>(
                      std::chrono::system_clock::now() - start )
                      .count();
+}
+
+bool AbstractLogView::shouldBottomAlignFrame() const
+{
+    if ( followElasticHook_.isHooked() || lastLineAligned_ ) {
+        return true;
+    }
+
+    if ( !followMode_ ) {
+        return false;
+    }
+
+    const auto scrollValue = verticalScrollBar()->value();
+    const auto scrollMax = verticalScrollBar()->maximum();
+    return scrollValue >= scrollMax;
+}
+
+int AbstractLogView::alignHiddenHeightToLineGrid( int hiddenHeightPx ) const
+{
+    if ( hiddenHeightPx <= 0 || charHeight_ <= 0 ) {
+        return 0;
+    }
+
+    return ( hiddenHeightPx / charHeight_ ) * charHeight_;
 }
 
 // These two functions are virtual and this implementation is clearly
@@ -2848,10 +2874,11 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
 
         std::transform( quickHighlighters_[ i ].begin(), quickHighlighters_[ i ].end(),
                         std::back_inserter( additionalHighlighters ),
-                        [ quickHighlighter ]( const QString& word ) {
-                            Highlighter h{ word, false, true, quickHighlighter.color.foreColor,
+                        [ quickHighlighter ]( const auto& entry ) {
+                            Highlighter h{ quickLabelPattern( entry ), entry.ignoreCase, true,
+                                           quickHighlighter.color.foreColor,
                                            quickHighlighter.color.backColor };
-                            h.setUseRegex( false );
+                            h.setUseRegex( true );
                             return h;
                         } );
     }
@@ -2868,7 +2895,9 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
 
         HighlightedMatchRanges highlighterMatches;
 
-        if ( selection_.isLineSelected( lineNumber ) && !selection_.isSingleLine() ) {
+        const auto isWholeLineSelected = selection_.isLineSelected( lineNumber );
+
+        if ( isWholeLineSelected ) {
             // Reverse the selected line
             foreColor = palette.color( QPalette::HighlightedText );
             backColor = palette.color( QPalette::Highlight );
@@ -3022,8 +3051,7 @@ void AbstractLogView::drawTextArea( QPaintDevice* paintDevice )
         lineDrawer.draw( painter.get(), xPos, yPos, viewport()->width(), wrappedLineView,
                          ContentMarginWidth );
 
-        if ( ( selection_.isLineSelected( lineNumber ) && selection_.isSingleLine() )
-             || selection_.getPortionForLine( lineNumber ).isValid() ) {
+        if ( isWholeLineSelected || selection_.getPortionForLine( lineNumber ).isValid() ) {
             auto selectionPen = QPen( palette.color( QPalette::Highlight ) );
             selectionPen.setWidth( 1 );
             painter->setPen( selectionPen );
@@ -3138,11 +3166,11 @@ void AbstractLogView::disableFollow()
 
 void AbstractLogView::setColorLabel( QAction* action )
 {
-    if ( action->data().isValid() ) {
-        Q_EMIT addColorLabel( static_cast<size_t>( action->data().toInt() ) );
+    if ( action->property( "removeColorLabel" ).toBool() ) {
+        Q_EMIT removeColorLabel();
     }
-    else {
-        Q_EMIT clearColorLabels();
+    else if ( action->data().isValid() ) {
+        Q_EMIT addColorLabel( static_cast<size_t>( action->data().toInt() ) );
     }
 }
 

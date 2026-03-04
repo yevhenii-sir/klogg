@@ -59,6 +59,7 @@
 #endif
 
 #include "abstractlogdata.h"
+#include "highlighterset.h"
 #include "linetypes.h"
 #include "overviewwidget.h"
 #include "quickfind.h"
@@ -109,6 +110,9 @@ class AbstractLogView : public QAbstractScrollArea, public SearchableWidgetInter
     Q_OBJECT
 
   public:
+    template <class T>
+    struct access_by;
+
     // Constructor of the widget, the data set is passed.
     // The caller retains ownership of the data set.
     // The pointer to the QFP is used for colouring and QuickFind searches
@@ -153,7 +157,7 @@ class AbstractLogView : public QAbstractScrollArea, public SearchableWidgetInter
 
     void setSearchPattern( const RegularExpressionPattern& pattern );
 
-    using QuickHighlighters = QStringList;
+    using QuickHighlighters = QList<QuickLabelEntry>;
     void setQuickHighlighters( const std::vector<QuickHighlighters>& wordHighlighters );
 
     void registerShortcuts();
@@ -246,7 +250,9 @@ class AbstractLogView : public QAbstractScrollArea, public SearchableWidgetInter
 
     void addColorLabel( size_t label );
     void addNextColorLabel();
+    void removeColorLabel();
     void clearColorLabels();
+    void quickColorLabelDefaultsChanged( bool ignoreCase, bool wholeWord );
     void highlightersChange();
 
   public Q_SLOTS:
@@ -509,6 +515,8 @@ class AbstractLogView : public QAbstractScrollArea, public SearchableWidgetInter
     void updateGlobalSelection();
 
     void selectAndDisplayRange( FilePosition pos );
+    bool shouldBottomAlignFrame() const;
+    int alignHiddenHeightToLineGrid( int hiddenHeightPx ) const;
 };
 
 #endif

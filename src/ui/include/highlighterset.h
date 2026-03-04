@@ -40,6 +40,7 @@
 #define highlighterSet_H
 
 #include <QColor>
+#include <QList>
 #include <QMetaType>
 #include <QRegularExpression>
 #include <memory>
@@ -171,6 +172,17 @@ struct QuickHighlighter {
     bool useInCycle;
 };
 
+struct QuickLabelEntry {
+    QString text;
+    bool ignoreCase = false;
+    bool wholeWord = true;
+};
+
+struct QuickHighlighterDefaults {
+    bool ignoreCase = false;
+    bool wholeWord = true;
+};
+
 class HighlighterSetCollection final : public Persistable<HighlighterSetCollection> {
   public:
     static const char* persistableName()
@@ -194,12 +206,15 @@ class HighlighterSetCollection final : public Persistable<HighlighterSetCollecti
     QList<QuickHighlighter> quickHighlighters() const;
     void setQuickHighlighters( const QList<QuickHighlighter>& quickHighlighters );
 
+    QuickHighlighterDefaults quickHighlighterDefaults() const;
+    void setQuickHighlighterDefaults( QuickHighlighterDefaults quickHighlighterDefaults );
+
     // Reads/writes the current config in the QSettings object passed
     void saveToStorage( QSettings& settings ) const;
     void retrieveFromStorage( QSettings& settings );
 
   private:
-    static constexpr int HighlighterSetCollection_VERSION = 2;
+    static constexpr int HighlighterSetCollection_VERSION = 3;
 
     void updateCombinedSet();
 
@@ -209,6 +224,7 @@ class HighlighterSetCollection final : public Persistable<HighlighterSetCollecti
     HighlighterSet combinedActiveSet_;
 
     QList<QuickHighlighter> quickHighlighters_;
+    QuickHighlighterDefaults quickHighlighterDefaults_;
 
     // To simplify this class interface, HighlightersDialog can access our
     // internal structure directly.

@@ -20,6 +20,7 @@
 #include <catch2/catch.hpp>
 
 #include <QSignalSpy>
+#include <QScrollBar>
 #include <QTemporaryFile>
 #include <QTest>
 #include <QTimer>
@@ -66,6 +67,37 @@ bool generateDataFiles( QTemporaryFile& file )
 } // namespace
 
 struct CrawlerWidgetPrivate {
+};
+
+struct AbstractLogViewPrivate {
+};
+
+template <>
+struct AbstractLogView::access_by<AbstractLogViewPrivate> {
+    static int drawingTopOffset( const AbstractLogView* view )
+    {
+        return view->drawingTopOffset_;
+    }
+
+    static int charHeight( const AbstractLogView* view )
+    {
+        return view->charHeight_;
+    }
+
+    static int leftMargin( const AbstractLogView* view )
+    {
+        return view->leftMarginPx_;
+    }
+
+    static LineNumber topLine( const AbstractLogView* view )
+    {
+        return view->firstLine_;
+    }
+
+    static QWidget* viewport( AbstractLogView* view )
+    {
+        return view->viewport();
+    }
 };
 
 template <>
@@ -150,6 +182,13 @@ struct CrawlerWidget::access_by<CrawlerWidgetPrivate> {
         crawler->grab();
     }
 
+    QImage grabFilteredViewport()
+    {
+        return AbstractLogView::access_by<AbstractLogViewPrivate>::viewport( crawler->filteredView_ )
+            ->grab()
+            .toImage();
+    }
+
     void setTextWrap( bool enabled )
     {
         crawler->logMainView_->textWrapSet( enabled );
@@ -207,6 +246,58 @@ struct CrawlerWidget::access_by<CrawlerWidgetPrivate> {
     {
         return crawler->logFilteredData_->lineTypeByLine( LineNumber( line ) )
             .testFlag( AbstractLogData::LineTypeFlags::Mark );
+    }
+
+    QColor filteredHighlightColor() const
+    {
+        return crawler->filteredView_->palette().color( QPalette::Highlight );
+    }
+
+    QColor filteredBaseColor() const
+    {
+        return crawler->filteredView_->palette().color( QPalette::Base );
+    }
+
+    int filteredContentX() const
+    {
+        const auto* viewport
+            = AbstractLogView::access_by<AbstractLogViewPrivate>::viewport( crawler->filteredView_ );
+        return std::max( 0, viewport->width() - 20 );
+    }
+
+    int filteredLineCenterY( LineNumber::UnderlyingType lineIndex ) const
+    {
+        const auto topLine
+            = AbstractLogView::access_by<AbstractLogViewPrivate>::topLine( crawler->filteredView_ );
+        const auto charHeight
+            = AbstractLogView::access_by<AbstractLogViewPrivate>::charHeight( crawler->filteredView_ );
+        const auto lineOffset = static_cast<int>( lineIndex - topLine.get() );
+        return ( lineOffset * charHeight ) + ( charHeight / 2 );
+    }
+
+    int filteredDrawingTopOffset() const
+    {
+        return AbstractLogView::access_by<AbstractLogViewPrivate>::drawingTopOffset(
+            crawler->filteredView_ );
+    }
+
+    int filteredCharHeight() const
+    {
+        return AbstractLogView::access_by<AbstractLogViewPrivate>::charHeight( crawler->filteredView_ );
+    }
+
+    void scrollFilteredVerticallyToBottom()
+    {
+        crawler->filteredView_->verticalScrollBar()->setValue(
+            crawler->filteredView_->verticalScrollBar()->maximum() );
+        QTest::qWait( 50 );
+    }
+
+    void scrollFilteredHorizontallyToMiddle()
+    {
+        crawler->filteredView_->horizontalScrollBar()->setValue(
+            crawler->filteredView_->horizontalScrollBar()->maximum() / 2 );
+        QTest::qWait( 50 );
     }
 
     void addMarksInMainView( const klogg::vector<LineNumber>& lines )
@@ -283,6 +374,54 @@ SCENARIO( "Crawler widget search", "[ui]" )
                 THEN( "text has same number of lines" )
                 {
                     REQUIRE( text.split( QChar::LineFeed ).size() == SL_NB_LINES );
+                }
+            }
+
+            AND_WHEN( "a filtered line is selected" )
+            {
+                constexpr auto SelectedLine = 10;
+                crawlerVisitor.clickFilteredViewLine( SelectedLine );
+                crawlerVisitor.render();
+
+                THEN( "the selected line uses the theme highlight background" )
+                {
+                    const auto image = crawlerVisitor.grabFilteredViewport();
+                    const auto sampleY = crawlerVisitor.filteredLineCenterY( SelectedLine );
+
+                    REQUIRE( sampleY >= 0 );
+                    REQUIRE( sampleY < image.height() );
+
+                    const auto pixelColor = image.pixelColor( crawlerVisitor.filteredContentX(),
+                                                              sampleY );
+                    REQUIRE( pixelColor != crawlerVisitor.filteredBaseColor() );
+                }
+            }
+
+            AND_WHEN( "the filtered view is scrolled vertically and horizontally" )
+            {
+                crawlerVisitor.resizeViews( 220, 95 );
+                crawlerVisitor.render();
+                crawlerVisitor.scrollFilteredVerticallyToBottom();
+                crawlerVisitor.render();
+
+                THEN( "vertical scrolling keeps the first visible line aligned to full rows" )
+                {
+                    REQUIRE( qAbs( crawlerVisitor.filteredDrawingTopOffset() )
+                             % crawlerVisitor.filteredCharHeight()
+                             == 0 );
+                }
+
+                AND_WHEN( "the filtered view is then scrolled horizontally" )
+                {
+                    crawlerVisitor.scrollFilteredHorizontallyToMiddle();
+                    crawlerVisitor.render();
+
+                    THEN( "horizontal scrolling preserves the same line-aligned top offset" )
+                    {
+                        REQUIRE( qAbs( crawlerVisitor.filteredDrawingTopOffset() )
+                                 % crawlerVisitor.filteredCharHeight()
+                                 == 0 );
+                    }
                 }
             }
         }

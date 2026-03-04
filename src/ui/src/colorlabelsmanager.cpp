@@ -22,6 +22,32 @@
 #include <algorithm>
 #include <vector>
 
+namespace {
+
+bool quickLabelMatchesText( const QuickLabelEntry& entry, const QString& text )
+{
+    const auto sensitivity
+        = entry.ignoreCase ? Qt::CaseInsensitive : Qt::CaseSensitive;
+    return QString::compare( entry.text, text, sensitivity ) == 0;
+}
+
+bool sameQuickLabelEntry( const QuickLabelEntry& lhs, const QuickLabelEntry& rhs )
+{
+    return lhs.text == rhs.text && lhs.ignoreCase == rhs.ignoreCase
+           && lhs.wholeWord == rhs.wholeWord;
+}
+
+bool containsQuickLabelEntry( const AbstractLogView::QuickHighlighters& entries,
+                              const QuickLabelEntry& entry )
+{
+    return std::any_of( entries.cbegin(), entries.cend(),
+                        [ &entry ]( const auto& existingEntry ) {
+                            return sameQuickLabelEntry( existingEntry, entry );
+                        } );
+}
+
+} // namespace
+
 ColorLabelsManager::QuickHighlightersCollection ColorLabelsManager::colorLabels() const
 {
     return quickHighlighters_;
@@ -38,13 +64,14 @@ ColorLabelsManager::QuickHighlightersCollection ColorLabelsManager::clear()
 }
 
 ColorLabelsManager::QuickHighlightersCollection
-ColorLabelsManager::setColorLabel( size_t label, const QString& text )
+ColorLabelsManager::setColorLabel( size_t label, const QString& text,
+                                   QuickHighlighterDefaults defaults )
 {
-    return updateColorLabel( label, text, true );
+    return updateColorLabel( label, text, defaults );
 }
 
 ColorLabelsManager::QuickHighlightersCollection
-ColorLabelsManager::setNextColorLabel( const QString& text )
+ColorLabelsManager::setNextColorLabel( const QString& text, QuickHighlighterDefaults defaults )
 {
     const auto& quickHighlightersConfiguration
         = HighlighterSetCollection::get().quickHighlighters();
@@ -64,8 +91,13 @@ ColorLabelsManager::setNextColorLabel( const QString& text )
 
     auto nextLabel = cycle.front();
 
-    if ( currentLabel_.has_value() ) {
-        auto nextIt = std::upper_bound( cycle.cbegin(), cycle.cend(), *currentLabel_ );
+    auto currentLabel = currentLabel_;
+    if ( !currentLabel ) {
+        currentLabel = currentColorLabelForText( text );
+    }
+
+    if ( currentLabel.has_value() ) {
+        auto nextIt = std::upper_bound( cycle.cbegin(), cycle.cend(), *currentLabel );
         if ( nextIt != cycle.cend() ) {
             nextLabel = *nextIt;
         }
@@ -73,24 +105,81 @@ ColorLabelsManager::setNextColorLabel( const QString& text )
 
     currentLabel_ = nextLabel;
 
-    return updateColorLabel( nextLabel, text, false );
+    return updateColorLabel( nextLabel, text, defaults );
 }
 
 ColorLabelsManager::QuickHighlightersCollection
-ColorLabelsManager::updateColorLabel( size_t label, const QString& text, bool replaceCurrent )
+ColorLabelsManager::removeColorLabel( const QString& text )
 {
-    auto wasHighlightedAnyLabel = false;
-    auto wasHighlightedOtherLabel = false;
+    if ( text.isEmpty() ) {
+        return quickHighlighters_;
+    }
+
+    for ( auto& quickHighlighter : quickHighlighters_ ) {
+        quickHighlighter.erase(
+            std::remove_if( quickHighlighter.begin(), quickHighlighter.end(),
+                            [ &text ]( const auto& entry ) {
+                                return quickLabelMatchesText( entry, text );
+                            } ),
+            quickHighlighter.end() );
+    }
+
+    currentLabel_.reset();
+
+    return quickHighlighters_;
+}
+
+std::optional<size_t> ColorLabelsManager::currentColorLabelForText( const QString& text ) const
+{
+    if ( text.isEmpty() ) {
+        return {};
+    }
 
     for ( auto i = 0u; i < quickHighlighters_.size(); ++i ) {
-        const auto wasHighlighted = quickHighlighters_[ i ].removeAll( text ) != 0;
-        wasHighlightedAnyLabel |= wasHighlighted;
-        wasHighlightedOtherLabel |= ( wasHighlighted && i != label );
+        if ( std::any_of( quickHighlighters_[ i ].cbegin(), quickHighlighters_[ i ].cend(),
+                          [ &text ]( const auto& entry ) {
+                              return quickLabelMatchesText( entry, text );
+                          } ) ) {
+            return i;
+        }
     }
 
-    if ( !( wasHighlightedAnyLabel ) || ( wasHighlightedOtherLabel && replaceCurrent ) ) {
-        quickHighlighters_[ label ].append( text );
+    return {};
+}
+
+ColorLabelsManager::QuickHighlightersCollection
+ColorLabelsManager::updateColorLabel( size_t label, const QString& text,
+                                      QuickHighlighterDefaults defaults )
+{
+    if ( text.isEmpty() || label >= quickHighlighters_.size() ) {
+        return quickHighlighters_;
     }
+
+    AbstractLogView::QuickHighlighters matchingEntries;
+    for ( auto& quickHighlighter : quickHighlighters_ ) {
+        quickHighlighter.erase(
+            std::remove_if( quickHighlighter.begin(), quickHighlighter.end(),
+                            [ &text, &matchingEntries ]( const auto& entry ) {
+                                const auto isMatch = quickLabelMatchesText( entry, text );
+                                if ( isMatch && !containsQuickLabelEntry( matchingEntries, entry ) ) {
+                                    matchingEntries.append( entry );
+                                }
+                                return isMatch;
+                            } ),
+            quickHighlighter.end() );
+    }
+
+    if ( matchingEntries.empty() ) {
+        matchingEntries.append( QuickLabelEntry{ text, defaults.ignoreCase, defaults.wholeWord } );
+    }
+
+    for ( const auto& entry : matchingEntries ) {
+        if ( !containsQuickLabelEntry( quickHighlighters_[ label ], entry ) ) {
+            quickHighlighters_[ label ].append( entry );
+        }
+    }
+
+    currentLabel_ = label;
 
     return quickHighlighters_;
 }

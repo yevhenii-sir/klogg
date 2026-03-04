@@ -268,7 +268,9 @@ class CrawlerWidget : public QSplitter,
 
     void addColorLabelToSelection( size_t label );
     void addNextColorLabelToSelection();
+    void removeColorLabelFromSelection();
     void clearColorLabels();
+    void setQuickColorLabelDefaults( bool ignoreCase, bool wholeWord );
 
     void changeFilteredView(int tabIndex);
     void closeFilteredView(int tabIndex);

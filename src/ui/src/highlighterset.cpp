@@ -514,6 +514,17 @@ void HighlighterSetCollection::setQuickHighlighters(
     quickHighlighters_ = quickHighlighters;
 }
 
+QuickHighlighterDefaults HighlighterSetCollection::quickHighlighterDefaults() const
+{
+    return quickHighlighterDefaults_;
+}
+
+void HighlighterSetCollection::setQuickHighlighterDefaults(
+    QuickHighlighterDefaults quickHighlighterDefaults )
+{
+    quickHighlighterDefaults_ = quickHighlighterDefaults;
+}
+
 void HighlighterSetCollection::saveToStorage( QSettings& settings ) const
 {
     LOG_INFO << "HighlighterSetCollection::saveToStorage, v" << HighlighterSetCollection_VERSION;
@@ -543,6 +554,10 @@ void HighlighterSetCollection::saveToStorage( QSettings& settings ) const
         settings.setValue( "cycle", quickHighlighters_[ i ].useInCycle );
     }
     settings.endArray();
+    settings.beginGroup( "quick_defaults" );
+    settings.setValue( "ignore_case", quickHighlighterDefaults_.ignoreCase );
+    settings.setValue( "whole_word", quickHighlighterDefaults_.wholeWord );
+    settings.endGroup();
     settings.endGroup();
 }
 
@@ -552,6 +567,7 @@ void HighlighterSetCollection::retrieveFromStorage( QSettings& settings )
 
     highlighters_.clear();
     quickHighlighters_.clear();
+    quickHighlighterDefaults_ = {};
 
     if ( settings.contains( "HighlighterSetCollection/version" ) ) {
         settings.beginGroup( "HighlighterSetCollection" );
@@ -590,6 +606,13 @@ void HighlighterSetCollection::retrieveFromStorage( QSettings& settings )
                 quickHighlighters_.append( std::move( quickHighlighter ) );
             }
             settings.endArray();
+
+            settings.beginGroup( "quick_defaults" );
+            quickHighlighterDefaults_.ignoreCase
+                = settings.value( "ignore_case", false ).toBool();
+            quickHighlighterDefaults_.wholeWord
+                = settings.value( "whole_word", true ).toBool();
+            settings.endGroup();
         }
         else {
             LOG_ERROR << "Unknown version of HighlighterSetCollection, ignoring it...";

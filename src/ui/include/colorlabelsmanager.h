@@ -32,14 +32,19 @@ class ColorLabelsManager {
 
     QuickHighlightersCollection colorLabels() const;
 
-    QuickHighlightersCollection setColorLabel( size_t label, const QString& text );
-    QuickHighlightersCollection setNextColorLabel( const QString& text );
+    QuickHighlightersCollection setColorLabel( size_t label, const QString& text,
+                                               QuickHighlighterDefaults defaults );
+    QuickHighlightersCollection setNextColorLabel( const QString& text,
+                                                   QuickHighlighterDefaults defaults );
+    QuickHighlightersCollection removeColorLabel( const QString& text );
+
+    std::optional<size_t> currentColorLabelForText( const QString& text ) const;
 
     QuickHighlightersCollection clear();
 
   private:
     QuickHighlightersCollection updateColorLabel( size_t label, const QString& text,
-                                                  bool replaceCurrent );
+                                                  QuickHighlighterDefaults defaults );
 
     QuickHighlightersCollection quickHighlighters_ = QuickHighlightersCollection{9};
     std::optional<size_t> currentLabel_;

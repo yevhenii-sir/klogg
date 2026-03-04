@@ -218,8 +218,8 @@ jobs:
             qt_archives: qtbase qtimageformats qttools qttranslations icu qtsvg
             qt_arch: win32_msvc2019
             arch: x86
-            package_tag: vs-gen
-            cmake_opts: -DKLOGG_USE_SENTRY=OFF -DKLOGG_GENERIC_CPU=ON -DKLOGG_USE_VECTORSCAN=ON
+            package_tag: QTRegex
+            cmake_opts: -DKLOGG_USE_SENTRY=OFF -DKLOGG_GENERIC_CPU=ON -DKLOGG_USE_VECTORSCAN=OFF
             label: x86-qt5
             artifacts_id: windows-x86-qt5
 
@@ -295,7 +295,8 @@ jobs:
 
       - uses: ./.github/actions/agent-build
 
-      - name: Verify vectorscan config in CMake cache
+      - name: Verify vectorscan config in CMake cache (x64)
+        if: ${{ matrix.config.arch == 'x64' }}
         shell: pwsh
         run: |
           $cachePath = Join-Path $env:GITHUB_WORKSPACE "build_root\CMakeCache.txt"
@@ -309,6 +310,24 @@ jobs:
             Write-Host "Current regex backend values:"
             Select-String -Path $cachePath -Pattern '^KLOGG_USE_VECTORSCAN:BOOL=|^KLOGG_GENERIC_CPU:BOOL=' | ForEach-Object { $_.Line }
             Write-Error "Unexpected vectorscan CMake settings"
+            exit 1
+          }
+
+      - name: Verify vectorscan disabled in CMake cache (x86)
+        if: ${{ matrix.config.arch == 'x86' }}
+        shell: pwsh
+        run: |
+          $cachePath = Join-Path $env:GITHUB_WORKSPACE "build_root\CMakeCache.txt"
+          if ( !(Test-Path $cachePath) ) {
+            Write-Error "CMake cache not found at $cachePath"
+            exit 1
+          }
+
+          $vectorscan = Select-String -Path $cachePath -Pattern '^KLOGG_USE_VECTORSCAN:BOOL=OFF$'
+          if ( !$vectorscan ) {
+            Write-Host "Current regex backend values:"
+            Select-String -Path $cachePath -Pattern '^KLOGG_USE_VECTORSCAN:BOOL=|^KLOGG_GENERIC_CPU:BOOL=' | ForEach-Object { $_.Line }
+            Write-Error "Vectorscan must stay disabled on Windows x86"
             exit 1
           }
 

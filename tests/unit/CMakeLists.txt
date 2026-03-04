@@ -1,6 +1,7 @@
 # Add test cpp file
 add_executable(klogg_tests
     cli_test.cpp
+    colorlabelsmanager_test.cpp
     highlighter_vectorscan_test.cpp
     linepositionarray_test.cpp
     patternmatcher_test.cpp
@@ -13,8 +14,6 @@ add_executable(klogg_tests
 target_link_libraries(klogg_tests klogg_ui klogg_utils klogg_logging Catch2 Qt${QT_VERSION_MAJOR}::Test test_utils)
 target_include_directories(klogg_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/app")
 set_target_properties(klogg_tests PROPERTIES AUTOMOC ON)
+klogg_configure_test_target(klogg_tests)
 
-add_test(
-    NAME klogg_tests
-    COMMAND klogg_tests -platform offscreen
-)
+klogg_add_runtime_test(klogg_tests klogg_tests)

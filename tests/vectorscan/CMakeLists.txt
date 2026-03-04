@@ -12,10 +12,8 @@ target_link_libraries(
           test_utils
           klogg_mimalloc_wrapper
 )
+klogg_configure_test_target(klogg_vectorscan_tests)
 
 add_dependencies(ci_build klogg_vectorscan_tests)
 
-add_test(
-  NAME klogg_vectorscan_tests
-  COMMAND klogg_vectorscan_tests -platform offscreen
-)
+klogg_add_runtime_test(klogg_vectorscan_tests klogg_vectorscan_tests)

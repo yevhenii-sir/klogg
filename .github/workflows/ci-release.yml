@@ -135,7 +135,7 @@ jobs:
       if: env.SENTRY_TOKEN != ''
       shell: sh
       run: |
-        sentry-cli upload-dif ./packages-windows-x86-qt5-vs-gen/klogg-$KLOGG_VERSION-x86-Qt5-vs-gen-pdb.zip 
+        sentry-cli upload-dif ./packages-windows-x86-qt5-QTRegex/klogg-$KLOGG_VERSION-x86-Qt5-QTRegex-pdb.zip 
         sentry-cli upload-dif ./packages-windows-x64-qt6-vs-avx2/klogg-$KLOGG_VERSION-x64-Qt6-vs-avx2-pdb.zip
 
     - name: Cleanup release artifacts
@@ -208,7 +208,7 @@ jobs:
           
           ## Windows {#windows}
           - Windows x64 (Qt 6, Vectorscan AVX2): `klogg-${{ env.KLOGG_VERSION }}-x64-Qt6-vs-avx2-setup.exe`
-          - Windows x86 (Qt 5, Vectorscan generic): `klogg-${{ env.KLOGG_VERSION }}-x86-Qt5-vs-gen-setup.exe`
+          - Windows x86 (Qt 5, QT Regex engine): `klogg-${{ env.KLOGG_VERSION }}-x86-Qt5-QTRegex-setup.exe`
           
           ## Linux {#linux}
           - Ubuntu 22.04 (Jammy, Vectorscan generic): `klogg-${{ env.KLOGG_VERSION }}-jammy-vs-gen.deb`
@@ -220,7 +220,7 @@ jobs:
           - Apple Silicon (ARM64, Vectorscan): `klogg-${{ env.KLOGG_VERSION }}-mac-arm64-vs-arm64.dmg`
         prerelease: false
         files: |
-          ./packages-windows-x86-qt5-vs-gen/*
+          ./packages-windows-x86-qt5-QTRegex/*
           ./packages-windows-x64-qt6-vs-avx2/*
           ./packages-jammy-vs-gen/*
           ./packages-noble-vs-gen/*
