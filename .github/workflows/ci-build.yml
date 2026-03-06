@@ -240,16 +240,14 @@ jobs:
           Invoke-WebRequest -Uri "https://www.firedaemon.com/download-firedaemon-openssl-1.1.1-zip" -OutFile openssl.zip
           7z x openssl.zip 
 
-      - name: Install PkgConfig
-        run: choco install pkgconfiglite -y
-
-      - name: Setup MSYS2 and install Ragel
+      - name: Setup MSYS2 and install tools
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
           update: true
           install: >-
             mingw-w64-x86_64-ragel
+            mingw-w64-x86_64-pkgconf
 
       - name: Set openssl paths
         shell: sh
@@ -277,10 +275,13 @@ jobs:
           )
 
           $msysBin = $msysBinCandidates |
-            Where-Object { Test-Path (Join-Path $_ "ragel.exe") } |
+            Where-Object {
+              (Test-Path (Join-Path $_ "ragel.exe")) -and
+              (Test-Path (Join-Path $_ "pkg-config.exe"))
+            } |
             Select-Object -First 1
           if ( !$msysBin ) {
-            Write-Error "ragel.exe not found in MSYS2 mingw64 bin candidates: $($msysBinCandidates -join ', ')"
+            Write-Error "ragel/pkg-config binaries not found in MSYS2 mingw64 bin candidates: $($msysBinCandidates -join ', ')"
             exit 1
           }
 
@@ -292,6 +293,11 @@ jobs:
         shell: pwsh
         run: |
           ragel -v
+
+      - name: Verify pkg-config
+        shell: pwsh
+        run: |
+          pkg-config --version
 
       - uses: ./.github/actions/agent-build
 
