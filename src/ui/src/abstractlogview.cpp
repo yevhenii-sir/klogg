@@ -1260,10 +1260,6 @@ bool AbstractLogView::shouldBottomAlignFrame() const
         return true;
     }
 
-    if ( !followMode_ ) {
-        return false;
-    }
-
     const auto scrollValue = verticalScrollBar()->value();
     const auto scrollMax = verticalScrollBar()->maximum();
     return scrollValue >= scrollMax;
@@ -1805,7 +1801,12 @@ void AbstractLogView::updateFont( const QFont& font )
 void AbstractLogView::updateDisplaySize()
 {
     // Font is assumed to be mono-space (is restricted by options dialog)
-    charHeight_ = std::max( pixmapFontMetrics_.height(), 1 );
+    const auto fontHeight = std::max( pixmapFontMetrics_.height(), 1 );
+    const auto lineSpacingPercent = Configuration::get().lineSpacingPercent();
+    charHeight_ = std::max(
+        static_cast<int>(
+            std::ceil( fontHeight * ( static_cast<double>( lineSpacingPercent ) / 100.0 ) ) ),
+        1 );
     charWidth_ = textWidth( pixmapFontMetrics_, QString( "m" ) );
     
     // Invalidate cached column count - will be recalculated on next getNbVisibleCols() call

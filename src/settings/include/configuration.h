@@ -64,6 +64,10 @@ static constexpr int MAX_RECENT_FILES = 25;
 // Configuration class containing everything in the "Settings" dialog
 class Configuration final : public Persistable<Configuration> {
   public:
+    static constexpr int MinLineSpacingPercent = 100;
+    static constexpr int DefaultLineSpacingPercent = 120;
+    static constexpr int MaxLineSpacingPercent = 200;
+
     static const char* persistableName()
     {
         return "Configuration";
@@ -73,6 +77,11 @@ class Configuration final : public Persistable<Configuration> {
     // Accesses the main font used for display
     QFont mainFont() const;
     void setMainFont( QFont newFont );
+    int lineSpacingPercent() const
+    {
+        return lineSpacingPercent_;
+    }
+    void setLineSpacingPercent( int percent );
 
     QString language() const
     {
@@ -635,6 +644,7 @@ class Configuration final : public Persistable<Configuration> {
     bool qfIgnoreCase_ = true;
 
     bool useTextWrap_ = false;
+    int lineSpacingPercent_ = DefaultLineSpacingPercent;
 
     bool confirmTabClose_ = true;
 

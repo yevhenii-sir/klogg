@@ -340,6 +340,7 @@ void OptionsDialog::updateDialogFromConfig()
     if ( sizeIndex != -1 )
         fontSizeBox->setCurrentIndex( sizeIndex );
 
+    lineSpacingSpinBox->setValue( config.lineSpacingPercent() );
     fontSmoothCheckBox->setChecked( config.forceFontAntialiasing() );
     boldFontCheckBox->setChecked( config.useBoldFont() );
     wrapTextCheckBox->setChecked( config.useTextWrap() );
@@ -545,6 +546,7 @@ void OptionsDialog::updateConfigFromDialog()
 
     QFont font = QFont( fontFamilyBox->currentText(), ( fontSizeBox->currentText() ).toInt() );
     config.setMainFont( font );
+    config.setLineSpacingPercent( lineSpacingSpinBox->value() );
     config.setForceFontAntialiasing( fontSmoothCheckBox->isChecked() );
     config.setUseBoldFont( boldFontCheckBox->isChecked() );
     config.setUseTextWrap( wrapTextCheckBox->isChecked() );

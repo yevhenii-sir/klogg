@@ -725,6 +725,11 @@
         <translation>在新增或取代模式上執行搜尋</translation>
     </message>
     <message>
+        <location filename="../../ui/include/optionsdialog.ui" line="311"/>
+        <source>Line spacing: </source>
+        <translation>行距：</translation>
+    </message>
+    <message>
         <location filename="../../ui/include/optionsdialog.ui" line="151"/>
         <source>Session options</source>
         <translation>工作階段選項</translation>

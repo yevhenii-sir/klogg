@@ -725,6 +725,11 @@
         <translation type="unfinished">在添加或替换模式上运行搜索</translation>
     </message>
     <message>
+        <location filename="../../ui/include/optionsdialog.ui" line="311"/>
+        <source>Line spacing: </source>
+        <translation>行间距：</translation>
+    </message>
+    <message>
         <location filename="../../ui/include/optionsdialog.ui" line="151"/>
         <source>Session options</source>
         <translation>会话选项</translation>

@@ -730,6 +730,11 @@
         <translation>Main search type: </translation>
     </message>
     <message>
+        <location filename="../../ui/include/optionsdialog.ui" line="311"/>
+        <source>Line spacing: </source>
+        <translation>Line spacing: </translation>
+    </message>
+    <message>
         <location filename="../../ui/include/optionsdialog.ui" line="139"/>
         <source>Run search on add or replace pattern</source>
         <translation>Run search on add or replace pattern</translation>

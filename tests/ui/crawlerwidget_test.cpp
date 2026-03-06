@@ -32,6 +32,7 @@
 #include "session.h"
 #include "test_utils.h"
 
+#include "configuration.h"
 #include "logdata.h"
 #include "logfiltereddata.h"
 
@@ -72,6 +73,24 @@ struct CrawlerWidgetPrivate {
 struct AbstractLogViewPrivate {
 };
 
+struct ConfigurationRestoreGuard {
+    QFont font;
+    int lineSpacingPercent;
+
+    ConfigurationRestoreGuard()
+        : font( Configuration::get().mainFont() )
+        , lineSpacingPercent( Configuration::get().lineSpacingPercent() )
+    {
+    }
+
+    ~ConfigurationRestoreGuard()
+    {
+        auto& config = Configuration::get();
+        config.setMainFont( font );
+        config.setLineSpacingPercent( lineSpacingPercent );
+    }
+};
+
 template <>
 struct AbstractLogView::access_by<AbstractLogViewPrivate> {
     static int drawingTopOffset( const AbstractLogView* view )
@@ -97,6 +116,16 @@ struct AbstractLogView::access_by<AbstractLogViewPrivate> {
     static QWidget* viewport( AbstractLogView* view )
     {
         return view->viewport();
+    }
+
+    static void setLastLineAligned( AbstractLogView* view, bool value )
+    {
+        view->lastLineAligned_ = value;
+    }
+
+    static bool shouldBottomAlignFrame( const AbstractLogView* view )
+    {
+        return view->shouldBottomAlignFrame();
     }
 };
 
@@ -231,6 +260,17 @@ struct CrawlerWidget::access_by<CrawlerWidgetPrivate> {
         return crawler->logMainView_->isFollowEnabled();
     }
 
+    void applyConfiguration()
+    {
+        crawler->applyConfiguration();
+        QTest::qWait( 50 );
+    }
+
+    int mainCharHeight() const
+    {
+        return AbstractLogView::access_by<AbstractLogViewPrivate>::charHeight( crawler->logMainView_ );
+    }
+
     void selectMainViewLine( LineNumber::UnderlyingType lineIndex )
     {
         crawler->logMainView_->selectAndDisplayLine( LineNumber( lineIndex ) );
@@ -284,6 +324,18 @@ struct CrawlerWidget::access_by<CrawlerWidgetPrivate> {
     int filteredCharHeight() const
     {
         return AbstractLogView::access_by<AbstractLogViewPrivate>::charHeight( crawler->filteredView_ );
+    }
+
+    void setFilteredLastLineAligned( bool value )
+    {
+        AbstractLogView::access_by<AbstractLogViewPrivate>::setLastLineAligned( crawler->filteredView_,
+                                                                                value );
+    }
+
+    bool filteredShouldBottomAlign() const
+    {
+        return AbstractLogView::access_by<AbstractLogViewPrivate>::shouldBottomAlignFrame(
+            crawler->filteredView_ );
     }
 
     void scrollFilteredVerticallyToBottom()
@@ -676,6 +728,63 @@ SCENARIO( "Crawler widget search", "[ui]" )
                         // If we get here without crash, the pull-to-follow bar
                         // positioning is correct and doesn't block text
                         REQUIRE( crawlerVisitor.isTextWrapEnabled() );
+                    }
+                }
+
+                AND_WHEN( "filtered view remains at scroll bottom without follow mode" )
+                {
+                    crawlerVisitor.enableFollowMode( false );
+                    crawlerVisitor.resizeViews( 300, 120 );
+                    crawlerVisitor.scrollFilteredVerticallyToBottom();
+                    crawlerVisitor.render();
+
+                    // Simulate state-reset paths where lastLineAligned_ is cleared while
+                    // the scrollbar is still at the bottom.
+                    crawlerVisitor.setFilteredLastLineAligned( false );
+
+                    THEN( "bottom alignment still follows scrollbar bottom state" )
+                    {
+                        REQUIRE_FALSE( crawlerVisitor.isFollowModeEnabled() );
+                        REQUIRE( crawlerVisitor.filteredShouldBottomAlign() );
+                    }
+                }
+
+                AND_WHEN( "line spacing is increased" )
+                {
+                    ConfigurationRestoreGuard restoreConfig;
+                    auto& config = Configuration::get();
+                    const auto originalFont = config.mainFont();
+                    const auto basePointSize
+                        = originalFont.pointSize() > 0 ? originalFont.pointSize() : 10;
+
+                    QFont testFont{ originalFont.family(), basePointSize };
+                    config.setMainFont( testFont );
+                    config.setLineSpacingPercent( Configuration::MinLineSpacingPercent );
+                    crawlerVisitor.applyConfiguration();
+
+                    const auto compactMainCharHeight = crawlerVisitor.mainCharHeight();
+                    const auto compactFilteredCharHeight = crawlerVisitor.filteredCharHeight();
+
+                    config.setLineSpacingPercent( 140 );
+                    crawlerVisitor.applyConfiguration();
+
+                    THEN( "main and filtered views use taller rows" )
+                    {
+                        REQUIRE( crawlerVisitor.mainCharHeight() > compactMainCharHeight );
+                        REQUIRE( crawlerVisitor.filteredCharHeight() > compactFilteredCharHeight );
+                    }
+
+                    AND_WHEN( "font size is changed afterwards" )
+                    {
+                        QFont largerFont{ testFont.family(), basePointSize + 2 };
+                        config.setMainFont( largerFont );
+                        crawlerVisitor.applyConfiguration();
+
+                        THEN( "the configured line spacing ratio remains applied" )
+                        {
+                            REQUIRE( crawlerVisitor.mainCharHeight() > compactMainCharHeight );
+                            REQUIRE( crawlerVisitor.filteredCharHeight() > compactFilteredCharHeight );
+                        }
                     }
                 }
             }

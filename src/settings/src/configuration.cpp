@@ -54,6 +54,12 @@ namespace {
 std::once_flag fontInitFlag;
 static const Configuration DefaultConfiguration = {};
 
+int clampLineSpacingPercent( int percent )
+{
+    return std::clamp( percent, Configuration::MinLineSpacingPercent,
+                       Configuration::MaxLineSpacingPercent );
+}
+
 } // namespace
 
 Configuration::Configuration()
@@ -82,6 +88,11 @@ void Configuration::setMainFont( QFont newFont )
     mainFont_ = newFont;
 }
 
+void Configuration::setLineSpacingPercent( int percent )
+{
+    lineSpacingPercent_ = clampLineSpacingPercent( percent );
+}
+
 void Configuration::retrieveFromStorage( QSettings& settings )
 {
     LOG_DEBUG << "Configuration::retrieveFromStorage";
@@ -102,6 +113,11 @@ void Configuration::retrieveFromStorage( QSettings& settings )
     useBoldFont_
         = settings.value( "mainFont.bold", DefaultConfiguration.useBoldFont_ )
               .toBool();
+    lineSpacingPercent_
+        = clampLineSpacingPercent(
+            settings
+                .value( "mainFont.lineSpacingPercent", DefaultConfiguration.lineSpacingPercent_ )
+                .toInt() );
 
     language_ = settings.value( "view.language", DefaultConfiguration.language_ ).toString();
 
@@ -378,6 +394,8 @@ void Configuration::saveToStorage( QSettings& settings ) const
     settings.setValue( "mainFont.size", fi.pointSize() );
     settings.setValue( "mainFont.antialiasing", forceFontAntialiasing_ );
     settings.setValue( "mainFont.bold", useBoldFont_ );
+    settings.setValue( "mainFont.lineSpacingPercent",
+                       clampLineSpacingPercent( lineSpacingPercent_ ) );
 
     settings.setValue( "regexpType.engine", static_cast<int>( regexpEngine_ ) );
 
