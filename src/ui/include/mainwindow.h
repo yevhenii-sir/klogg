@@ -126,6 +126,8 @@ class MainWindow : public QMainWindow {
     void importFilterFavorites();
     void exportFilterFavorites();
     void mergeTabs();
+    std::vector<QString> showMergeFilesDialog( const QStringList& filePaths );
+    bool executeMerge( const std::vector<QString>& filesToMerge );
     void options();
     void about();
     void aboutQt();
@@ -264,6 +266,7 @@ class MainWindow : public QMainWindow {
     QAction* lineNumbersVisibleInMainAction;
     QAction* lineNumbersVisibleInFilteredAction;
     QAction* followAction;
+    QAction* goToTopAction;
     QAction* textWrapAction;
     QAction* reloadAction;
     QAction* stopAction;
