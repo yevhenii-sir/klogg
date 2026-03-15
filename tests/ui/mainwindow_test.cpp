@@ -23,21 +23,28 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
 #include <QKeySequence>
 #include <QSignalSpy>
+#include <QTabBar>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QToolButton>
 #include <QUuid>
 
 #include <QToolBar>
 
 #include "test_utils.h"
 
+#include "adblogcatsource.h"
+#include "capturestore.h"
 #include "crawlerwidget.h"
 #include "log.h"
 #include "mainwindow.h"
+#include "persistentinfo.h"
 #include "session.h"
 #include "sessioninfo.h"
+#include "tabgroup.h"
 
 namespace {
 QString makeTestDir( const QString& prefix )
@@ -48,6 +55,42 @@ QString makeTestDir( const QString& prefix )
                                           + QUuid::createUuid().toString( QUuid::WithoutBraces ) );
     QDir{}.mkpath( dirPath );
     return dirPath;
+}
+
+void clearPersistedTabGroups()
+{
+    auto& settings = PersistentInfo::getSettings( app_settings{} );
+    settings.remove( "tabGroups" );
+    settings.sync();
+    TabGroupManager::getSynced();
+}
+
+struct TabGroupCleanupGuard {
+    TabGroupCleanupGuard()
+    {
+        clearPersistedTabGroups();
+    }
+
+    ~TabGroupCleanupGuard()
+    {
+        clearPersistedTabGroups();
+    }
+};
+
+QToolButton* findGroupChipButton( QTabBar* tabBar, int tabIndex )
+{
+    if ( tabBar == nullptr || tabIndex < 0 || tabIndex >= tabBar->count() ) {
+        return nullptr;
+    }
+
+    for ( const auto side : { QTabBar::LeftSide, QTabBar::RightSide } ) {
+        if ( auto* chip = qobject_cast<QToolButton*>( tabBar->tabButton( tabIndex, side ) );
+             chip != nullptr && !chip->text().isEmpty() ) {
+            return chip;
+        }
+    }
+
+    return nullptr;
 }
 } // namespace
 
@@ -177,6 +220,99 @@ SCENARIO( "Main window tests", "[ui]" )
             }
         }
     }
+}
+
+SCENARIO( "Tab group chip shows the full group name", "[ui][tabgroup]" )
+{
+    TabGroupCleanupGuard tabGroupCleanupGuard;
+
+    auto appSession = std::make_shared<Session>();
+    const auto windowId = QString( "tab-group-chip-%1" ).arg(
+        QUuid::createUuid().toString( QUuid::WithoutBraces ) );
+    WindowSession windowSession{ appSession, windowId, 0 };
+
+    std::unique_ptr<MainWindow> mainWindow;
+    QTimer::singleShot( 0, [&] { mainWindow.reset( new MainWindow( windowSession ) ); } );
+
+    QTest::qWait( 100 );
+    mainWindow->resize( 1600, 900 );
+    mainWindow->show();
+    QTest::qWait( 100 );
+
+    auto runInUiThread = [uiObject = mainWindow.get()]( auto&& func ) {
+        QTimer::singleShot( 0, Qt::VeryCoarseTimer, uiObject,
+                            std::forward<decltype( func )>( func ) );
+        QTest::qWait( 100 );
+    };
+
+    auto* tabArea = mainWindow->findChild<TabbedCrawlerWidget*>();
+    REQUIRE( tabArea != nullptr );
+    auto* tabBar = tabArea->findChild<QTabBar*>();
+    REQUIRE( tabBar != nullptr );
+
+    const auto tempDirPath = makeTestDir( "tabgroup_chip" );
+    REQUIRE( QDir{ tempDirPath }.exists() );
+    const auto firstFilePath = QDir{ tempDirPath }.filePath( "group_a.log" );
+    const auto secondFilePath = QDir{ tempDirPath }.filePath( "group_b.log" );
+    for ( const auto& filePath : { firstFilePath, secondFilePath } ) {
+        QFile testFile( filePath );
+        REQUIRE( testFile.open( QIODevice::WriteOnly | QIODevice::Truncate ) );
+        testFile.write( "line\n" );
+    }
+
+    runInUiThread( [&mainWindow, firstFilePath, secondFilePath] {
+        mainWindow->loadInitialFile( firstFilePath, false );
+        mainWindow->loadInitialFile( secondFilePath, false );
+    } );
+
+    REQUIRE( waitUiState( [&] { return tabArea->count() == 2; } ) );
+    REQUIRE( waitUiState( [&] { return tabBar->count() == 2 && tabBar->isVisible(); } ) );
+
+    QString groupId;
+    runInUiThread( [ &groupId, firstFilePath ] {
+        auto& groupManager = TabGroupManager::get();
+        groupManager.createGroup( "C", QColor( "#D96C1A" ) );
+        groupId = groupManager.groups().back().id;
+        groupManager.addTabToGroup( groupId, firstFilePath );
+        groupManager.save();
+    } );
+
+    REQUIRE( !groupId.isEmpty() );
+
+    auto verifyGroupChipName = [ tabBar ]( const QString& expectedName ) -> int {
+        REQUIRE( waitUiState( [ tabBar, &expectedName ] {
+            auto* chip = findGroupChipButton( tabBar, 0 );
+            return chip != nullptr && chip->text() == expectedName
+                   && chip->width() >= chip->sizeHint().width() - 4;
+        } ) );
+
+        auto* chip = findGroupChipButton( tabBar, 0 );
+        REQUIRE( chip != nullptr );
+        const int sizeHintWidth = chip->sizeHint().width();
+        REQUIRE( sizeHintWidth > chip->iconSize().width() + 8 );
+        REQUIRE( chip->width() >= sizeHintWidth - 4 );
+        return sizeHintWidth;
+    };
+
+    const int singleLetterWidth = verifyGroupChipName( "C" );
+
+    const auto renameGroupAndVerify = [ &runInUiThread, &groupId, &verifyGroupChipName ](
+                                          const QString& groupName ) -> int {
+        runInUiThread( [ &groupId, groupName ] {
+            auto& groupManager = TabGroupManager::get();
+            groupManager.renameGroup( groupId, groupName );
+            groupManager.save();
+        } );
+        return verifyGroupChipName( groupName );
+    };
+
+    const int coreWidth = renameGroupAndVerify( "Core" );
+    const int compileGroupWidth = renameGroupAndVerify( "Compile Group" );
+    const int daemonLogsWidth = renameGroupAndVerify( "Compile Core Daemon Logs" );
+
+    REQUIRE( coreWidth > singleLetterWidth );
+    REQUIRE( compileGroupWidth > coreWidth );
+    REQUIRE( daemonLogsWidth > compileGroupWidth );
 }
 
 // Helper: write raw bytes to a temp file and return its path
@@ -424,4 +560,123 @@ SCENARIO( "MainWindow close keeps persisted open files for session restore", "[u
 
     config.setMinimizeToTray( previousMinimizeToTray );
     config.save();
+}
+
+SCENARIO( "MainWindow close preserves restored ADB capture files", "[ui][session][adb]" )
+{
+    auto appSession = std::make_shared<Session>();
+    auto& sessionInfo = SessionInfo::getSynced();
+    auto windowIds = sessionInfo.windows();
+    const auto windowId = windowIds.isEmpty()
+                              ? QString( "close-adb-session-%1" ).arg(
+                                    QUuid::createUuid().toString( QUuid::WithoutBraces ) )
+                              : windowIds.front();
+
+    if ( windowIds.isEmpty() ) {
+        sessionInfo.add( windowId );
+    }
+    else {
+        for ( auto i = windowIds.size() - 1; i > 0; --i ) {
+            sessionInfo.remove( windowIds.at( i ) );
+        }
+    }
+
+    const auto captureId = QString( "adb_capture_%1" ).arg(
+        QUuid::createUuid().toString( QUuid::WithoutBraces ) );
+    QString capturePath;
+    {
+        CaptureStore captureStore( captureId );
+        captureStore.appendUtf8( QByteArray( "line\n" ) );
+        captureStore.finishInput();
+        capturePath = captureStore.capturePath();
+    }
+    REQUIRE( QDir{ capturePath }.exists() );
+
+    const AdbLogcatSessionData adbSessionData{
+        QStringLiteral( "adb" ),
+        QStringLiteral( "serial-1" ),
+        QStringLiteral( "Pixel Test" ),
+        QString{},
+        captureId,
+        QString{},
+    };
+    const auto sourceSpec = QString::fromUtf8(
+        QJsonDocument( adbSessionData.toJson() ).toJson( QJsonDocument::Compact ) );
+
+    sessionInfo.setOpenFiles(
+        windowId, { SessionInfo::OpenFile( adbSessionData.documentId(), 0, {}, "adb_logcat",
+                                           adbSessionData.displayName(), sourceSpec ) } );
+    sessionInfo.setCurrentFileIndex( windowId, 0 );
+    sessionInfo.save();
+
+    WindowSession windowSession{ appSession, windowId, 0 };
+
+    auto& config = Configuration::get();
+    const auto previousMinimizeToTray = config.minimizeToTray();
+    config.setMinimizeToTray( false );
+    config.save();
+
+    std::unique_ptr<MainWindow> mainWindow;
+    QTimer::singleShot( 0, [&] { mainWindow.reset( new MainWindow( windowSession ) ); } );
+
+    QTest::qWait( 100 );
+    mainWindow->show();
+    QTest::qWait( 100 );
+
+    auto runInUiThread = [ uiObject = mainWindow.get() ]( auto&& func ) {
+        QTimer::singleShot( 0, Qt::VeryCoarseTimer, uiObject,
+                            std::forward<decltype( func )>( func ) );
+        QTest::qWait( 100 );
+    };
+
+    auto tabArea = mainWindow->findChild<TabbedCrawlerWidget*>();
+    REQUIRE( tabArea != nullptr );
+
+    runInUiThread( [&mainWindow] { mainWindow->reloadSession(); } );
+    REQUIRE( waitUiState( [&] { return tabArea->count() == 1; } ) );
+
+    runInUiThread( [&mainWindow] { mainWindow->close(); } );
+    REQUIRE( waitUiState( [&] { return !mainWindow->isVisible(); } ) );
+
+    REQUIRE( QDir{ capturePath }.exists() );
+    const auto persistedOpenFiles = SessionInfo::getSynced().openFiles( windowId );
+    REQUIRE( persistedOpenFiles.size() == 1 );
+    REQUIRE( persistedOpenFiles.front().sourceType == QStringLiteral( "adb_logcat" ) );
+
+    config.setMinimizeToTray( previousMinimizeToTray );
+    config.save();
+}
+
+SCENARIO( "Session restore clears unavailable ADB output bindings", "[ui][session][adb]" )
+{
+    auto appSession = std::make_shared<Session>();
+    const auto tempDirPath = makeTestDir( "restore_adb_output" );
+    REQUIRE( QDir{ tempDirPath }.exists() );
+
+    const auto parentAsFile = QDir{ tempDirPath }.filePath( "not_a_directory" );
+    {
+        QFile parentFile( parentAsFile );
+        REQUIRE( parentFile.open( QIODevice::WriteOnly | QIODevice::Truncate ) );
+        parentFile.write( "x" );
+    }
+
+    const AdbLogcatSessionData adbSessionData{
+        QStringLiteral( "adb" ),
+        QStringLiteral( "serial-restore" ),
+        QStringLiteral( "Restore Device" ),
+        QString{},
+        QString( "restore_capture_%1" ).arg( QUuid::createUuid().toString( QUuid::WithoutBraces ) ),
+        QDir{ parentAsFile }.filePath( "capture.log" ),
+    };
+
+    auto* view = appSession->openAdbLogcat( adbSessionData, []() { return new CrawlerWidget(); },
+                                            false );
+    REQUIRE( view != nullptr );
+
+    REQUIRE( appSession->getAssociatedPath( view ).isEmpty() );
+    auto* adbSource = appSession->getAdbLogcatSource( view );
+    REQUIRE( adbSource != nullptr );
+    REQUIRE( adbSource->sessionData().boundOutputFile.isEmpty() );
+
+    appSession->close( view );
 }

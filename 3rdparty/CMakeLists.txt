@@ -75,6 +75,11 @@ if(KLOGG_USE_VECTORSCAN)
       "Vectorscan toolchain: C_COMPILER_ID=${CMAKE_C_COMPILER_ID}, C_COMPILER=${CMAKE_C_COMPILER}, MSVC=${MSVC}"
   )
 
+  # Download vectorscan source without processing its cmake files.
+  # Patches must be applied BEFORE add_subdirectory so that cmake-level
+  # fixes (e.g. MSVC warning flags) take effect during configuration.
+  # Using DOWNLOAD_ONLY keeps UNPARSED_ARGUMENTS empty, matching the
+  # prefetch project's CPM source-cache hash.
   cpmaddpackage(
     NAME
     vectorscan
@@ -82,26 +87,21 @@ if(KLOGG_USE_VECTORSCAN)
     VectorCamp/vectorscan
     GIT_TAG
     d29730e1cb9daaa66bda63426cdce83505d2c809
-    EXCLUDE_FROM_ALL
+    DOWNLOAD_ONLY
     YES
-    PATCH_COMMAND
-    ${CMAKE_COMMAND}
-    -DREPO_DIR=.
-    -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/patches/fix_vectorscan_msvc_warning_flags.patch
-    -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/apply_git_patch.cmake
-    OPTIONS
-    "BUILD_STATIC_LIBS ON"
-    "BUILD_UNIT OFF"
-    "BUILD_TOOLS OFF"
-    "BUILD_EXAMPLES OFF"
-    "BUILD_BENCHMARKS OFF"
-    "BUILD_DOC OFF"
-    "BUILD_CHIMERA OFF"
-    "BUILD_AVX2 ${VECTORSCAN_BUILD_AVX2}"
-    "BUILD_AVX512 ${VECTORSCAN_BUILD_AVX512}"
-    "BUILD_AVX512VBMI ${VECTORSCAN_BUILD_AVX512}"
-    "FAT_RUNTIME OFF"
   )
+
+  execute_process(
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DREPO_DIR=${vectorscan_SOURCE_DIR}
+      -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/patches/fix_vectorscan_msvc_warning_flags.patch
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/apply_git_patch.cmake
+    RESULT_VARIABLE _vectorscan_warning_patch_result
+  )
+  if(NOT _vectorscan_warning_patch_result EQUAL 0)
+    message(FATAL_ERROR "Failed to apply VectorScan warning flags patch: ${CMAKE_CURRENT_SOURCE_DIR}/patches/fix_vectorscan_msvc_warning_flags.patch")
+  endif()
 
   execute_process(
     COMMAND
@@ -112,9 +112,24 @@ if(KLOGG_USE_VECTORSCAN)
     RESULT_VARIABLE _vectorscan_patch_result
   )
   if(NOT _vectorscan_patch_result EQUAL 0)
-    message(FATAL_ERROR "Failed to apply VectorScan patch: ${CMAKE_CURRENT_SOURCE_DIR}/patches/fix_vectorscan_msvc_aligned_free.patch")
+    message(FATAL_ERROR "Failed to apply VectorScan aligned_free patch: ${CMAKE_CURRENT_SOURCE_DIR}/patches/fix_vectorscan_msvc_aligned_free.patch")
   endif()
- 
+
+  # Set vectorscan build options before processing its cmake files
+  set(BUILD_STATIC_LIBS ON CACHE INTERNAL "" FORCE)
+  set(BUILD_UNIT OFF CACHE INTERNAL "" FORCE)
+  set(BUILD_TOOLS OFF CACHE INTERNAL "" FORCE)
+  set(BUILD_EXAMPLES OFF CACHE INTERNAL "" FORCE)
+  set(BUILD_BENCHMARKS OFF CACHE INTERNAL "" FORCE)
+  set(BUILD_DOC OFF CACHE INTERNAL "" FORCE)
+  set(BUILD_CHIMERA OFF CACHE INTERNAL "" FORCE)
+  set(BUILD_AVX2 ${VECTORSCAN_BUILD_AVX2} CACHE INTERNAL "" FORCE)
+  set(BUILD_AVX512 ${VECTORSCAN_BUILD_AVX512} CACHE INTERNAL "" FORCE)
+  set(BUILD_AVX512VBMI ${VECTORSCAN_BUILD_AVX512} CACHE INTERNAL "" FORCE)
+  set(FAT_RUNTIME OFF CACHE INTERNAL "" FORCE)
+
+  add_subdirectory(${vectorscan_SOURCE_DIR} ${vectorscan_BINARY_DIR} EXCLUDE_FROM_ALL)
+
   message("Adding alias for vectorscan")
   add_library(klogg_vectorscan INTERFACE)
   target_link_libraries(klogg_vectorscan INTERFACE hs)
@@ -160,13 +175,21 @@ cpmaddpackage(
   f546bf6ae66a8d34b43da5a41afcfbf4e1a47906
   EXCLUDE_FROM_ALL
   YES
-  PATCH_COMMAND
-  ${CMAKE_COMMAND}
-  -DREPO_DIR=.
-  -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/patches/fix_karchive_qt6.patch
-  -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/apply_git_patch.cmake
 )
-if(NOT KF5Archive_ADDED)
+if(KF5Archive_ADDED)
+  execute_process(
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DREPO_DIR=${KF5Archive_SOURCE_DIR}
+      -DPATCH_FILE=${CMAKE_CURRENT_SOURCE_DIR}/patches/fix_karchive_qt6.patch
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/apply_git_patch.cmake
+    RESULT_VARIABLE _karchive_patch_result
+  )
+  if(NOT _karchive_patch_result EQUAL 0)
+    message(FATAL_ERROR "Failed to apply KArchive Qt6 patch: ${CMAKE_CURRENT_SOURCE_DIR}/patches/fix_karchive_qt6.patch")
+  endif()
+else()
+  # KF5Archive_ADDED is false — use system package
   find_package(KF5Archive)
   add_library(klogg_karchive INTERFACE)
   target_link_libraries(klogg_karchive INTERFACE KF5::Archive)
