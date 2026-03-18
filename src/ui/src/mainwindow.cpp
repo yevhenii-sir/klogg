@@ -255,6 +255,11 @@ void MainWindow::reloadGeometry()
 
     session_.restoreGeometry( &geometry );
     restoreGeometry( geometry );
+
+    // Prevent restoring in minimized state (can happen if session was saved while minimized)
+    if ( windowState().testFlag( Qt::WindowMinimized ) ) {
+        setWindowState( windowState() & ~Qt::WindowMinimized );
+    }
 }
 
 void MainWindow::reloadSession()
@@ -804,6 +809,8 @@ void MainWindow::updateShortcuts()
     setShortcuts( selectOpenFileAction, ShortcutAction::MainWindowSelectOpenFile );
     setShortcuts( goToLineAction, ShortcutAction::LogViewJumpToLine );
     setShortcuts( optionsAction, ShortcutAction::MainWindowPreference );
+    setShortcuts( disconnectSourceAction, ShortcutAction::MainWindowDisconnectSource );
+    setShortcuts( reconnectSourceAction, ShortcutAction::MainWindowReconnectSource );
 }
 
 void MainWindow::loadIcons()
@@ -1280,11 +1287,7 @@ void MainWindow::saveCurrentLiveLog()
         return;
     }
 
-    const auto toolTip = session_.getAssociatedPath( crawler ).isEmpty()
-                             ? session_.getDisplayName( crawler )
-                             : session_.getAssociatedPath( crawler );
-    mainTabWidget_.updateCrawler( mainTabWidget_.currentIndex(), session_.getDisplayName( crawler ),
-                                  toolTip );
+    updateLiveTabAppearance( crawler );
     updateMenuBarFromDocument( crawler );
     updateOpenedFilesMenu();
     updateInfoLine();
@@ -2227,6 +2230,37 @@ void MainWindow::addRecentFile( const QString& fileName )
     updateRecentFileActions();
 }
 
+void MainWindow::updateLiveTabAppearance( CrawlerWidget* crawler )
+{
+    const auto tabIndex = mainTabWidget_.indexOf( crawler );
+    if ( tabIndex < 0 ) {
+        return;
+    }
+
+    auto* source = session_.getAdbLogcatSource( crawler );
+    const auto displayName = session_.getDisplayName( crawler );
+    const auto baseTip = session_.getAssociatedPath( crawler ).isEmpty()
+                             ? displayName
+                             : session_.getAssociatedPath( crawler );
+
+    QString title = displayName;
+    QString toolTip = baseTip;
+    if ( source ) {
+        const auto state = source->state();
+        if ( state == AdbLogcatSource::State::Error ) {
+            title += tr( " [error]" );
+            if ( !source->lastError().isEmpty() ) {
+                toolTip = tr( "%1\nError: %2" ).arg( baseTip, source->lastError() );
+            }
+        }
+        else if ( state == AdbLogcatSource::State::Disconnected ) {
+            title += tr( " [disconnected]" );
+        }
+    }
+
+    mainTabWidget_.updateCrawler( tabIndex, title, toolTip );
+}
+
 void MainWindow::registerAdbLogcatSource( CrawlerWidget* crawler )
 {
     if ( !crawler || session_.getDocumentKind( crawler ) != DocumentKind::AdbLogcat ) {
@@ -2238,19 +2272,26 @@ void MainWindow::registerAdbLogcatSource( CrawlerWidget* crawler )
         return;
     }
 
-    connect( adbSource, &AdbLogcatSource::stateChanged, this, [ this, crawler ] {
-        if ( currentCrawlerWidget() == crawler ) {
-            updateMenuBarFromDocument( crawler );
-            updateInfoLine();
-        }
-        updateOpenedFilesMenu();
-    } );
-    connect( adbSource, &AdbLogcatSource::errorOccurred, this,
-             [ this, crawler ]( const QString& error ) {
-                 if ( currentCrawlerWidget() == crawler && !error.isEmpty() ) {
-                     QMessageBox::warning( this, tr( "ADB logcat" ), error );
+    connect( adbSource, &AdbLogcatSource::stateChanged, this,
+             [ this, crawler ]( AdbLogcatSource::State ) {
+                 if ( currentCrawlerWidget() == crawler ) {
+                     updateMenuBarFromDocument( crawler );
+                     updateInfoLine();
                  }
+                 updateOpenedFilesMenu();
+                 updateLiveTabAppearance( crawler );
              } );
+    connect( adbSource, &AdbLogcatSource::errorOccurred, this,
+             [ this, crawler ]( const QString& ) {
+                 if ( currentCrawlerWidget() == crawler ) {
+                     updateInfoLine();
+                 }
+                 updateLiveTabAppearance( crawler );
+             } );
+
+    // Sync tab appearance immediately in case the source is already
+    // in Error or Disconnected state (e.g. during session restore).
+    updateLiveTabAppearance( crawler );
 }
 
 // Updates the actions for the recent files.
@@ -2720,69 +2761,82 @@ std::vector<QString> MainWindow::showMergeFilesDialog( const QStringList& filePa
     dialog.setMinimumWidth( 400 );
 
     auto* layout = new QVBoxLayout( &dialog );
-    layout->addWidget( new QLabel( tr( "Select and order files to merge:" ) ) );
+    layout->addWidget( new QLabel( tr( "Check files in desired merge order:" ) ) );
 
     auto* listWidget = new QListWidget( &dialog );
+    // Qt::UserRole = file path, Qt::UserRole+1 = original display name, Qt::UserRole+2 = check order
+    int checkCounter = 0;
 
     for ( const auto& filePath : filePaths ) {
         const auto displayName = QFileInfo( filePath ).fileName();
         auto* item = new QListWidgetItem( displayName );
         item->setData( Qt::UserRole, filePath );
         item->setData( Qt::UserRole + 1, displayName );
+        item->setData( Qt::UserRole + 2, 0 );
         item->setCheckState( Qt::Unchecked );
         item->setFlags( item->flags() | Qt::ItemIsUserCheckable );
         listWidget->addItem( item );
     }
     layout->addWidget( listWidget );
 
-    // Lambda to update sequence numbers on checked items
+    // Lambda to update sequence numbers based on check order
     auto updateSequenceNumbers = [ listWidget ]() {
+        // Collect checked items with their check order
+        std::vector<std::pair<int, int>> checkedItems; // (check order, list index)
+        for ( int i = 0; i < listWidget->count(); ++i ) {
+            auto* item = listWidget->item( i );
+            if ( item->checkState() == Qt::Checked ) {
+                checkedItems.emplace_back( item->data( Qt::UserRole + 2 ).toInt(), i );
+            }
+        }
+        std::sort( checkedItems.begin(), checkedItems.end() );
+
         listWidget->blockSignals( true );
-        int seq = 1;
+        // Reset all to original names first
         for ( int i = 0; i < listWidget->count(); ++i ) {
             auto* item = listWidget->item( i );
             const auto originalName = item->data( Qt::UserRole + 1 ).toString();
-            if ( item->checkState() == Qt::Checked ) {
-                item->setText( QString( "%1. %2" ).arg( seq++ ).arg( originalName ) );
-            }
-            else {
+            if ( item->checkState() != Qt::Checked ) {
                 item->setText( originalName );
             }
+        }
+        // Number checked items by check order
+        int seq = 1;
+        for ( const auto& [ order, idx ] : checkedItems ) {
+            auto* item = listWidget->item( idx );
+            const auto originalName = item->data( Qt::UserRole + 1 ).toString();
+            item->setText( QString( "%1. %2" ).arg( seq++ ).arg( originalName ) );
         }
         listWidget->blockSignals( false );
     };
 
-    connect( listWidget, &QListWidget::itemChanged, [ updateSequenceNumbers ]( QListWidgetItem* ) {
-        updateSequenceNumbers();
-    } );
-
-    // Up/Down buttons
-    auto* buttonLayout = new QHBoxLayout();
-    auto* upButton = new QPushButton( tr( "Move Up" ), &dialog );
-    auto* downButton = new QPushButton( tr( "Move Down" ), &dialog );
-    buttonLayout->addWidget( upButton );
-    buttonLayout->addWidget( downButton );
-    layout->addLayout( buttonLayout );
-
-    connect( upButton, &QPushButton::clicked, [ listWidget, updateSequenceNumbers ]() {
-        const int row = listWidget->currentRow();
-        if ( row > 0 ) {
-            auto* item = listWidget->takeItem( row );
-            listWidget->insertItem( row - 1, item );
-            listWidget->setCurrentRow( row - 1 );
-            updateSequenceNumbers();
-        }
-    } );
-
-    connect( downButton, &QPushButton::clicked, [ listWidget, updateSequenceNumbers ]() {
-        const int row = listWidget->currentRow();
-        if ( row >= 0 && row < listWidget->count() - 1 ) {
-            auto* item = listWidget->takeItem( row );
-            listWidget->insertItem( row + 1, item );
-            listWidget->setCurrentRow( row + 1 );
-            updateSequenceNumbers();
-        }
-    } );
+    // checkCounter lives on the stack of showMergeFilesDialog; safe because
+    // dialog.exec() blocks until the dialog closes, keeping it alive.
+    connect( listWidget, &QListWidget::itemChanged,
+             [ &checkCounter, listWidget, updateSequenceNumbers ]( QListWidgetItem* item ) {
+                 // Block signals while mutating item data to prevent recursive
+                 // itemChanged from corrupting checkCounter.
+                 {
+                     const QSignalBlocker blocker( listWidget );
+                     if ( item->checkState() == Qt::Checked ) {
+                         item->setData( Qt::UserRole + 2, ++checkCounter );
+                     }
+                     else {
+                         // Uncheck: compact remaining order values so re-check gets the next slot
+                         const int removedOrder = item->data( Qt::UserRole + 2 ).toInt();
+                         item->setData( Qt::UserRole + 2, 0 );
+                         for ( int i = 0; i < listWidget->count(); ++i ) {
+                             auto* other = listWidget->item( i );
+                             const int otherOrder = other->data( Qt::UserRole + 2 ).toInt();
+                             if ( otherOrder > removedOrder ) {
+                                 other->setData( Qt::UserRole + 2, otherOrder - 1 );
+                             }
+                         }
+                         --checkCounter;
+                     }
+                 }
+                 updateSequenceNumbers();
+             } );
 
     auto* dialogButtons
         = new QDialogButtonBox( QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog );
@@ -2794,13 +2848,21 @@ std::vector<QString> MainWindow::showMergeFilesDialog( const QStringList& filePa
         return {};
     }
 
-    // Collect checked files in order
-    std::vector<QString> result;
+    // Collect checked files sorted by check order
+    std::vector<std::pair<int, QString>> checkedFiles;
     for ( int i = 0; i < listWidget->count(); ++i ) {
         auto* item = listWidget->item( i );
         if ( item->checkState() == Qt::Checked ) {
-            result.push_back( item->data( Qt::UserRole ).toString() );
+            checkedFiles.emplace_back( item->data( Qt::UserRole + 2 ).toInt(),
+                                       item->data( Qt::UserRole ).toString() );
         }
+    }
+    std::sort( checkedFiles.begin(), checkedFiles.end() );
+
+    std::vector<QString> result;
+    result.reserve( checkedFiles.size() );
+    for ( auto& [ order, path ] : checkedFiles ) {
+        result.push_back( std::move( path ) );
     }
 
     if ( result.size() < 2 ) {
