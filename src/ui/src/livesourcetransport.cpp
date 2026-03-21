@@ -3,7 +3,9 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QMetaType>
+#include <QPointer>
 #include <QProcess>
+#include <QTimer>
 
 #include "log.h"
 
@@ -21,8 +23,13 @@ LiveSourceTransport::LiveSourceTransport( QObject* parent ) : QObject( parent )
 
 ProcessLiveSourceTransport::ProcessLiveSourceTransport( QObject* parent )
     : LiveSourceTransport( parent )
-    , process_( std::make_unique<QProcess>() )
 {
+    createProcess();
+}
+
+void ProcessLiveSourceTransport::createProcess()
+{
+    process_ = std::make_unique<QProcess>();
     process_->setProcessChannelMode( QProcess::SeparateChannels );
 
     connect( process_.get(), &QProcess::readyReadStandardOutput, this, [ this ] {
@@ -112,6 +119,13 @@ bool ProcessLiveSourceTransport::connectTransport()
             && startupTimer.elapsed() < StartupFailureGracePeriodMs ) {
         process_->waitForFinished( StartupFailurePollIntervalMs );
         QCoreApplication::processEvents();
+
+        // A disconnect may have been processed during processEvents(),
+        // swapping process_ with a fresh idle instance.  Bail out cleanly
+        // instead of misdiagnosing the new process as a startup failure.
+        if ( state_ == State::Disconnected ) {
+            return false;
+        }
     }
 
     if ( state_ == State::Error || process_->state() == QProcess::NotRunning ) {
@@ -136,15 +150,40 @@ void ProcessLiveSourceTransport::disconnectTransport()
         return;
     }
 
-    disconnectRequested_ = true;
-    process_->terminate();
-    if ( !process_->waitForFinished( 1500 ) ) {
-        process_->kill();
-        process_->waitForFinished( 1500 );
-    }
+    // Detach old process and cut all signal connections
+    auto* dying = process_.release();
+    dying->disconnect( this );
 
     disconnectRequested_ = false;
-    setState( State::Disconnected );
+
+    // Terminate the old process
+    if ( destroyed_ ) {
+        // Destructor path: synchronous cleanup, no need to create a new process
+        setState( State::Disconnected );
+        dying->terminate();
+        if ( !dying->waitForFinished( 1500 ) ) {
+            dying->kill();
+            dying->waitForFinished( 1500 );
+        }
+        delete dying;
+    }
+    else {
+        // Create fresh process for future connections
+        createProcess();
+        setState( State::Disconnected );
+
+        // Async cleanup, non-blocking
+        dying->terminate();
+        QObject::connect( dying,
+                          qOverload<int, QProcess::ExitStatus>( &QProcess::finished ),
+                          dying, &QObject::deleteLater );
+        QPointer<QProcess> guard( dying );
+        QTimer::singleShot( 1500, dying, [ guard ] {
+            if ( guard && guard->state() != QProcess::NotRunning ) {
+                guard->kill();
+            }
+        } );
+    }
 }
 
 bool ProcessLiveSourceTransport::clearRemote( QString* error )
