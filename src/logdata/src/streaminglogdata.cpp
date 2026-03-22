@@ -16,10 +16,35 @@ StreamingLogData::StreamingLogData( QString captureId, QString captureRoot )
     connect( &outputFlushTimer_, &QTimer::timeout, this, [this] {
         captureStore_.flush();
     } );
+
+    captureStore_.setOutputFlushedCallback( [this] {
+        // Restart timer so the 1-second countdown begins after each threshold flush.
+        // Use QMetaObject::invokeMethod to ensure QTimer is accessed from its owning thread.
+        QMetaObject::invokeMethod( &outputFlushTimer_, [this] {
+            if ( outputFlushTimer_.isActive() ) {
+                outputFlushTimer_.start();
+            }
+        }, Qt::QueuedConnection );
+    } );
+}
+
+StreamingLogData::~StreamingLogData()
+{
+    // Clear callback before members are destroyed to prevent use-after-free.
+    // captureStore_ is declared before outputFlushTimer_, so the timer is
+    // destroyed first; without this, CaptureStore's destructor could fire
+    // the callback against a dead timer.
+    captureStore_.setOutputFlushedCallback( nullptr );
 }
 
 void StreamingLogData::appendUtf8( const QByteArray& data )
 {
+    // Restart the flush timer if new data arrives while an output file is bound
+    // but the timer is stopped (e.g. after finishInput from a reconnect cycle).
+    if ( !outputFlushTimer_.isActive() && !captureStore_.boundOutputFile().isEmpty() ) {
+        startOutputFlushTimer();
+    }
+
     const auto previousLineCount = captureStore_.lineCount();
     captureStore_.appendUtf8( data );
     if ( captureStore_.lineCount() != previousLineCount ) {
@@ -41,8 +66,17 @@ void StreamingLogData::finishInput()
 
 void StreamingLogData::clearCapture()
 {
+    const auto timerWasActive = outputFlushTimer_.isActive();
     stopOutputFlushTimer();
     captureStore_.clear();
+
+    // clear() internally rebinds the output file if one was bound.
+    // Only restart the timer if it was running before the clear,
+    // so a clearCapture after finishInput does not revive the timer.
+    if ( timerWasActive && !captureStore_.boundOutputFile().isEmpty() ) {
+        startOutputFlushTimer();
+    }
+
     Q_EMIT fileChanged( MonitoredFileStatus::Truncated );
     scheduleLoadingFinished();
 }
