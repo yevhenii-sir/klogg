@@ -80,7 +80,10 @@ void runSearch( LogFilteredData* filtered_data, const QString& regexp,
 
     // Drain any pending throttled signals to avoid a use-after-free when the
     // LogFilteredData teardown races with a still-pending throttler timer.
-    searchProgressSpy.clear();
+    // Do NOT clear() the spy first -- callers (e.g. the TASK-001 generation
+    // SCENARIOs) need to introspect the signals captured during the consume
+    // loop, and on Windows the throttler may not emit any extra signal after
+    // the unthrottled progress==100 emit, leaving spy.count() == 0 if cleared.
     QElapsedTimer drainTimer;
     drainTimer.start();
     const int idleTimeoutMs = 500;
@@ -1115,5 +1118,93 @@ SCENARIO( "getLineLength works with context lines", "[logdata][context]" )
                 }
             }
         }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// TASK-001: Search generation IDs
+//
+// Each call to runSearch() / updateSearch() advances a monotonic generation
+// counter on LogFilteredData.  Every searchProgressed signal carries the
+// generation that was active when the underlying SearchOperation started, so
+// receivers (CrawlerWidget) can drop stale signals from a superseded search
+// without relying on the disconnect/reconnect-around-replaceCurrentSearch
+// hack.
+// ----------------------------------------------------------------------------
+
+SCENARIO( "interruptSearch does not advance the search generation",
+          "[logdata][search-generation]" )
+{
+    // Codifies the Stop-button vs Replace-button contract: interruptSearch()
+    // must leave the generation untouched so the final progress signal from
+    // the in-flight search still reaches CrawlerWidget::updateFilteredView()
+    // and triggers UI cleanup (hide gauge, hide Stop button, show Search /
+    // Clear buttons).  Replace-flows that need stale signals dropped use
+    // bumpSearchGeneration() explicitly.
+    LogDataLoader logDataLoader;
+    auto filtered_data = makeTestFilteredData( logDataLoader.log_data );
+
+    SafeQSignalSpy searchProgressSpy{ filtered_data.get(),
+                                      &LogFilteredData::searchProgressed };
+    runSearch( filtered_data.get(), "this is line [0-9]{5}9", searchProgressSpy );
+
+    const auto generationAfterSearch = filtered_data->currentSearchGeneration();
+    REQUIRE( generationAfterSearch > 0 );
+
+    filtered_data->interruptSearch();
+    REQUIRE( filtered_data->currentSearchGeneration() == generationAfterSearch );
+}
+
+SCENARIO( "bumpSearchGeneration advances by exactly one",
+          "[logdata][search-generation]" )
+{
+    LogDataLoader logDataLoader;
+    auto filtered_data = makeTestFilteredData( logDataLoader.log_data );
+
+    const auto before = filtered_data->currentSearchGeneration();
+    filtered_data->bumpSearchGeneration();
+    REQUIRE( filtered_data->currentSearchGeneration() == before + 1 );
+
+    filtered_data->bumpSearchGeneration();
+    REQUIRE( filtered_data->currentSearchGeneration() == before + 2 );
+}
+
+SCENARIO( "search generation increments on each runSearch", "[logdata][search-generation]" )
+{
+    LogDataLoader logDataLoader;
+    auto filtered_data = makeTestFilteredData( logDataLoader.log_data );
+
+    REQUIRE( filtered_data->currentSearchGeneration() == 0 );
+
+    SafeQSignalSpy searchProgressSpy{ filtered_data.get(),
+                                      &LogFilteredData::searchProgressed };
+
+    runSearch( filtered_data.get(), "this is line [0-9]{5}9", searchProgressSpy );
+    const auto firstGen = filtered_data->currentSearchGeneration();
+    REQUIRE( firstGen > 0 );
+
+    runSearch( filtered_data.get(), "this is line [0-9]{5}3", searchProgressSpy );
+    const auto secondGen = filtered_data->currentSearchGeneration();
+    REQUIRE( secondGen > firstGen );
+}
+
+SCENARIO( "searchProgressed signal carries the search generation",
+          "[logdata][search-generation]" )
+{
+    LogDataLoader logDataLoader;
+    auto filtered_data = makeTestFilteredData( logDataLoader.log_data );
+
+    SafeQSignalSpy searchProgressSpy{ filtered_data.get(),
+                                      &LogFilteredData::searchProgressed };
+
+    runSearch( filtered_data.get(), "this is line [0-9]{5}9", searchProgressSpy );
+
+    REQUIRE( searchProgressSpy.count() > 0 );
+    const auto activeGeneration = filtered_data->currentSearchGeneration();
+    for ( int i = 0; i < searchProgressSpy.count(); ++i ) {
+        const auto args = searchProgressSpy.at( i );
+        REQUIRE( args.size() == 4 );
+        const auto gen = args.at( 3 ).toULongLong();
+        REQUIRE( gen == activeGeneration );
     }
 }
