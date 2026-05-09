@@ -19,6 +19,7 @@
 
 #include <catch2/catch.hpp>
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDialogButtonBox>
@@ -26,17 +27,28 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QFont>
 #include <QGuiApplication>
+#include <QJsonDocument>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSettings>
+#include <QTemporaryDir>
+#include <QUuid>
+
+#include <map>
 
 #include "adbprocesstransport.h"
+#include "adblogcatsource.h"
 #include "adblogcatdialog.h"
 #include "configuration.h"
+#include "ioslogprocesstransport.h"
 #include "livesourcetransport.h"
 #include "optionsdialog.h"
 #include "recentfiles.h"
 #include "savedsearches.h"
+#include "streaminglogdata.h"
+#include "shortcuts.h"
 #include "test_utils.h"
 
 namespace {
@@ -48,12 +60,23 @@ bool isHeadlessDialogTestEnvironment()
                   == 0;
 }
 
+bool skipHeadlessOptionsDialogTest()
+{
+    if ( isHeadlessDialogTestEnvironment() ) {
+        WARN( "OptionsDialog UI coverage is skipped on headless/offscreen platforms" );
+        return true;
+    }
+
+    return false;
+}
+
 class ScopedAdbConfigurationGuard {
   public:
     ScopedAdbConfigurationGuard()
         : config_( Configuration::getSynced() )
         , executable_( config_.adbExecutable() )
         , extraArgs_( config_.adbLogcatExtraArgs() )
+        , ansiOutput_( config_.adbLogcatAnsiOutputEnabled() )
     {
     }
 
@@ -61,6 +84,7 @@ class ScopedAdbConfigurationGuard {
     {
         config_.setAdbExecutable( executable_ );
         config_.setAdbLogcatExtraArgs( extraArgs_ );
+        config_.setAdbLogcatAnsiOutputEnabled( ansiOutput_ );
         config_.save();
     }
 
@@ -68,6 +92,45 @@ class ScopedAdbConfigurationGuard {
     Configuration& config_;
     QString executable_;
     QString extraArgs_;
+    bool ansiOutput_;
+};
+
+class ScopedOptionsDialogConfigurationGuard {
+  public:
+    ScopedOptionsDialogConfigurationGuard()
+        : config_( Configuration::getSynced() )
+        , savedSearches_( SavedSearches::getSynced() )
+        , recentFiles_( RecentFiles::getSynced() )
+    {
+        REQUIRE( snapshotDir_.isValid() );
+        snapshotPath_ = snapshotDir_.filePath( QStringLiteral( "settings.ini" ) );
+
+        QSettings snapshot( snapshotPath_, QSettings::IniFormat );
+        config_.saveToStorage( snapshot );
+        savedSearches_.saveToStorage( snapshot );
+        recentFiles_.saveToStorage( snapshot );
+        snapshot.sync();
+    }
+
+    ~ScopedOptionsDialogConfigurationGuard()
+    {
+        QSettings snapshot( snapshotPath_, QSettings::IniFormat );
+        config_.retrieveFromStorage( snapshot );
+        config_.save();
+
+        savedSearches_.retrieveFromStorage( snapshot );
+        savedSearches_.save();
+
+        recentFiles_.retrieveFromStorage( snapshot );
+        recentFiles_.save();
+    }
+
+  private:
+    Configuration& config_;
+    SavedSearches& savedSearches_;
+    RecentFiles& recentFiles_;
+    QTemporaryDir snapshotDir_;
+    QString snapshotPath_;
 };
 
 class TestAdbProcessTransport : public AdbProcessTransport {
@@ -85,6 +148,38 @@ class TestAdbProcessTransport : public AdbProcessTransport {
         return clearCommand();
     }
 };
+
+class TestIosLogProcessTransport : public IosLogProcessTransport {
+  public:
+    using IosLogProcessTransport::IosLogProcessTransport;
+    using Command = ProcessLiveSourceTransport::Command;
+
+    Command streamingCommandForTest() const
+    {
+        return streamingCommand();
+    }
+
+    Command clearCommandForTest() const
+    {
+        return clearCommand();
+    }
+};
+
+QString makeCaptureId()
+{
+    return QUuid::createUuid().toString( QUuid::WithoutBraces );
+}
+
+bool waitForLineCount( const std::shared_ptr<StreamingLogData>& logData, unsigned long long lineCount )
+{
+    QElapsedTimer deadline;
+    deadline.start();
+    while ( logData->getNbLine().get() < lineCount && deadline.elapsed() < 5000 ) {
+        QCoreApplication::processEvents();
+        QTest::qWait( 50 );
+    }
+    return logData->getNbLine().get() >= lineCount;
+}
 } // namespace
 
 TEST_CASE( "AdbProcessTransport builds normalized streaming and clear commands" )
@@ -140,6 +235,141 @@ TEST_CASE( "AdbProcessTransport preserves literal backslashes in extra args" )
                              QStringLiteral( "--title" ), QStringLiteral( "hello world" ) } );
 }
 
+TEST_CASE( "AdbProcessTransport preserves empty quoted extra args" )
+{
+    TestAdbProcessTransport transport( QString{}, QStringLiteral( "serial-123" ),
+                                       QStringLiteral( "--empty '' --quoted \"\"" ) );
+
+    const auto streaming = transport.streamingCommandForTest();
+    REQUIRE( streaming.arguments
+             == QStringList{ QStringLiteral( "-s" ), QStringLiteral( "serial-123" ),
+                             QStringLiteral( "logcat" ), QStringLiteral( "--empty" ),
+                             QString{}, QStringLiteral( "--quoted" ), QString{} } );
+}
+
+TEST_CASE( "AdbProcessTransport adds logcat color modifier when ANSI output is enabled" )
+{
+    TestAdbProcessTransport transport( QString{}, QStringLiteral( "serial-123" ),
+                                       QStringLiteral( "-v threadtime *:I" ), true );
+
+    const auto streaming = transport.streamingCommandForTest();
+    REQUIRE( streaming.arguments
+             == QStringList{ QStringLiteral( "-s" ), QStringLiteral( "serial-123" ),
+                             QStringLiteral( "logcat" ), QStringLiteral( "-v" ),
+                             QStringLiteral( "color" ), QStringLiteral( "-v" ),
+                             QStringLiteral( "threadtime" ), QStringLiteral( "*:I" ) } );
+}
+
+TEST_CASE( "IosLogProcessTransport builds normalized streaming commands" )
+{
+    TestIosLogProcessTransport transport(
+        QStringLiteral( "/opt/homebrew/bin/pymobiledevice3" ),
+        QStringLiteral( "00008030-001C195E36D8802E" ),
+        QStringLiteral( "--match \"process name\"" ) );
+
+    const auto streaming = transport.streamingCommandForTest();
+    REQUIRE( streaming.program == QStringLiteral( "/opt/homebrew/bin/pymobiledevice3" ) );
+    REQUIRE( streaming.arguments
+             == QStringList{ QStringLiteral( "--no-color" ), QStringLiteral( "syslog" ),
+                             QStringLiteral( "live" ),
+                             QStringLiteral( "--udid" ),
+                             QStringLiteral( "00008030-001C195E36D8802E" ),
+                             QStringLiteral( "--match" ),
+                             QStringLiteral( "process name" ) } );
+}
+
+TEST_CASE( "IosLogProcessTransport preserves empty quoted extra args" )
+{
+    TestIosLogProcessTransport transport(
+        QStringLiteral( "/opt/homebrew/bin/pymobiledevice3" ),
+        QStringLiteral( "00008030-001C195E36D8802E" ),
+        QStringLiteral( "--tunnel '' --match \"\"" ) );
+
+    const auto streaming = transport.streamingCommandForTest();
+    REQUIRE( streaming.arguments
+             == QStringList{ QStringLiteral( "--no-color" ), QStringLiteral( "syslog" ),
+                             QStringLiteral( "live" ), QStringLiteral( "--udid" ),
+                             QStringLiteral( "00008030-001C195E36D8802E" ),
+                             QStringLiteral( "--tunnel" ), QString{}, QStringLiteral( "--match" ),
+                             QString{} } );
+}
+
+TEST_CASE( "IosLogProcessTransport controls pymobiledevice3 ANSI color output" )
+{
+    TestIosLogProcessTransport colorTransport(
+        QStringLiteral( "/opt/homebrew/bin/pymobiledevice3" ),
+        QStringLiteral( "00008030-001C195E36D8802E" ), QString{}, true );
+    TestIosLogProcessTransport plainTransport(
+        QStringLiteral( "/opt/homebrew/bin/pymobiledevice3" ),
+        QStringLiteral( "00008030-001C195E36D8802E" ), QString{}, false );
+
+    REQUIRE( colorTransport.streamingCommandForTest().arguments
+             == QStringList{ QStringLiteral( "--color" ), QStringLiteral( "syslog" ),
+                             QStringLiteral( "live" ), QStringLiteral( "--udid" ),
+                             QStringLiteral( "00008030-001C195E36D8802E" ) } );
+    REQUIRE( plainTransport.streamingCommandForTest().arguments
+             == QStringList{ QStringLiteral( "--no-color" ), QStringLiteral( "syslog" ),
+                             QStringLiteral( "live" ), QStringLiteral( "--udid" ),
+                             QStringLiteral( "00008030-001C195E36D8802E" ) } );
+}
+
+TEST_CASE( "IosLogProcessTransport clear command is an inert no-op" )
+{
+    TestIosLogProcessTransport transport(
+        QStringLiteral( "/opt/homebrew/bin/pymobiledevice3" ),
+        QStringLiteral( "00008030-001C195E36D8802E" ), QString{} );
+
+    const auto clear = transport.clearCommandForTest();
+#ifdef Q_OS_WIN
+    REQUIRE( clear.program == QStringLiteral( "cmd" ) );
+    REQUIRE( clear.arguments == QStringList{ QStringLiteral( "/c" ), QStringLiteral( "exit" ),
+                                             QStringLiteral( "0" ) } );
+#else
+    REQUIRE( clear.program == QStringLiteral( "true" ) );
+    REQUIRE( clear.arguments.isEmpty() );
+#endif
+}
+
+TEST_CASE( "IosLogProcessTransport falls back to legacy pymobiledevice3 device listing" )
+{
+#ifdef Q_OS_MAC
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    const auto scriptPath = tempDir.filePath( QStringLiteral( "pymobiledevice3" ) );
+    QFile script( scriptPath );
+    REQUIRE( script.open( QIODevice::WriteOnly | QIODevice::Text ) );
+    script.write( "#!/bin/sh\n"
+                  "case \"$*\" in\n"
+                  "  *--simple*) echo 'No such option: --simple' >&2; exit 2 ;;\n"
+                  "esac\n"
+                  "printf '[{\"Identifier\":\"00008030\",\"DeviceName\":\"Test iPhone\"}]\\n'\n" );
+    script.close();
+    REQUIRE( script.setPermissions( QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner ) );
+
+    QString error;
+    const auto devices = IosLogProcessTransport::listDevices( scriptPath, &error );
+    REQUIRE( error.isEmpty() );
+    REQUIRE( devices.size() == 1 );
+    CHECK( devices.front().udid == QStringLiteral( "00008030" ) );
+    CHECK( devices.front().description == QStringLiteral( "Test iPhone" ) );
+#else
+    SUCCEED( "pymobiledevice3 device listing is macOS-only." );
+#endif
+}
+
+TEST_CASE( "IosLogProcessTransport reports unsupported device listing off macOS" )
+{
+#ifndef Q_OS_MAC
+    QString error;
+    const auto devices = IosLogProcessTransport::listDevices( QString{}, &error );
+    REQUIRE( devices.isEmpty() );
+    REQUIRE_FALSE( error.isEmpty() );
+#else
+    SUCCEED( "iOS device listing is macOS-only and covered by command construction here." );
+#endif
+}
+
 TEST_CASE( "AdbProcessTransport reports startup failures through the transport interface" )
 {
     TestAdbProcessTransport transport( QStringLiteral( "/path/that/does/not/exist/adb" ),
@@ -182,8 +412,7 @@ TEST_CASE( "AdbProcessTransport surfaces immediate post-start failures as transp
 
 TEST_CASE( "OptionsDialog loads and persists adb settings" )
 {
-    if ( isHeadlessDialogTestEnvironment() ) {
-        WARN( "OptionsDialog UI coverage is skipped on headless/offscreen platforms" );
+    if ( skipHeadlessOptionsDialogTest() ) {
         return;
     }
 
@@ -217,10 +446,139 @@ TEST_CASE( "OptionsDialog loads and persists adb settings" )
              == QStringLiteral( "-v threadtime ActivityManager:I *:S" ) );
 }
 
+TEST_CASE( "OptionsDialog default shortcut table keeps Apply and OK enabled" )
+{
+    if ( skipHeadlessOptionsDialogTest() ) {
+        return;
+    }
+
+    ScopedOptionsDialogConfigurationGuard configGuard;
+    auto& config = Configuration::getSynced();
+    config.setShortcuts( {} );
+    config.save();
+
+    OptionsDialog dialog;
+    auto* buttonBox = dialog.findChild<QDialogButtonBox*>( QStringLiteral( "buttonBox" ) );
+    REQUIRE( buttonBox != nullptr );
+
+    auto* okButton = buttonBox->button( QDialogButtonBox::Ok );
+    auto* applyButton = buttonBox->button( QDialogButtonBox::Apply );
+    REQUIRE( okButton != nullptr );
+    REQUIRE( applyButton != nullptr );
+    CHECK( okButton->isEnabled() );
+    CHECK( applyButton->isEnabled() );
+}
+
+TEST_CASE( "OptionsDialog persists changed font size from preferences" )
+{
+    if ( skipHeadlessOptionsDialogTest() ) {
+        return;
+    }
+
+    ScopedOptionsDialogConfigurationGuard configGuard;
+    auto& config = Configuration::getSynced();
+    const auto originalFont = config.mainFont();
+    const auto baseSize = originalFont.pointSize() > 0 ? originalFont.pointSize() : 10;
+    config.setMainFont( QFont{ originalFont.family(), baseSize } );
+    config.save();
+
+    OptionsDialog dialog;
+    auto* fontSizeBox = dialog.findChild<QComboBox*>( QStringLiteral( "fontSizeBox" ) );
+    REQUIRE( fontSizeBox != nullptr );
+
+    const auto requestedSize = baseSize == 13 ? 14 : 13;
+    auto sizeIndex = fontSizeBox->findText( QString::number( requestedSize ) );
+    if ( sizeIndex == -1 ) {
+        fontSizeBox->addItem( QString::number( requestedSize ) );
+        sizeIndex = fontSizeBox->findText( QString::number( requestedSize ) );
+    }
+    REQUIRE( sizeIndex != -1 );
+    fontSizeBox->setCurrentIndex( sizeIndex );
+
+    REQUIRE( QMetaObject::invokeMethod( &dialog, "updateConfigFromDialog", Qt::DirectConnection ) );
+
+    const auto restoredFont = Configuration::getSynced().mainFont();
+    CHECK( restoredFont.pointSize() == requestedSize );
+}
+
+TEST_CASE( "OptionsDialog reset buttons restore defaults and can be applied" )
+{
+    if ( skipHeadlessOptionsDialogTest() ) {
+        return;
+    }
+
+    ScopedOptionsDialogConfigurationGuard configGuard;
+
+    auto& config = Configuration::getSynced();
+    config.setVersionCheckingEnabled( false );
+    config.setLineSpacingPercent( Configuration::MaxLineSpacingPercent );
+    config.setPollIntervalMs( 12345 );
+    config.setAdbExecutable( QStringLiteral( "/custom/adb" ) );
+    config.setAdbLogcatAnsiOutputEnabled( true );
+    config.setIosLogExecutable( QStringLiteral( "/custom/pymobiledevice3" ) );
+    config.setIosLogAnsiOutputEnabled( true );
+    config.setUseSearchResultsCache( false );
+    config.setShortcuts( { { ShortcutAction::MainWindowOpenFile,
+                             QStringList{ QStringLiteral( "Ctrl+Shift+P" ) } } } );
+    config.save();
+
+    auto& savedSearches = SavedSearches::getSynced();
+    savedSearches.setHistorySize( 7 );
+    savedSearches.save();
+    auto& recentFiles = RecentFiles::getSynced();
+    recentFiles.setFilesHistoryMaxItems( 9 );
+    recentFiles.save();
+
+    OptionsDialog dialog;
+    const QStringList resetButtons{
+        QStringLiteral( "resetGeneralDefaultsButton" ),
+        QStringLiteral( "resetViewDefaultsButton" ),
+        QStringLiteral( "resetFileDefaultsButton" ),
+        QStringLiteral( "restoreShortcutsDefaults" ),
+        QStringLiteral( "resetAdvancedDefaultsButton" ),
+    };
+
+    for ( const auto& objectName : resetButtons ) {
+        auto* button = dialog.findChild<QPushButton*>( objectName );
+        REQUIRE( button != nullptr );
+        button->click();
+        QCoreApplication::processEvents();
+    }
+
+    REQUIRE( QMetaObject::invokeMethod( &dialog, "updateConfigFromDialog", Qt::DirectConnection ) );
+
+    const Configuration defaults;
+    const SavedSearches defaultSavedSearches;
+    const RecentFiles defaultRecentFiles;
+    const auto& restoredConfig = Configuration::getSynced();
+
+    CHECK( restoredConfig.versionCheckingEnabled() == defaults.versionCheckingEnabled() );
+    CHECK( restoredConfig.lineSpacingPercent() == defaults.lineSpacingPercent() );
+    CHECK( restoredConfig.pollIntervalMs() == defaults.pollIntervalMs() );
+    CHECK( restoredConfig.adbExecutable() == defaults.adbExecutable() );
+    CHECK( restoredConfig.adbLogcatAnsiOutputEnabled()
+           == defaults.adbLogcatAnsiOutputEnabled() );
+    CHECK( restoredConfig.iosLogExecutable() == defaults.iosLogExecutable() );
+    CHECK( restoredConfig.iosLogAnsiOutputEnabled() == defaults.iosLogAnsiOutputEnabled() );
+    CHECK( restoredConfig.useSearchResultsCache() == defaults.useSearchResultsCache() );
+    CHECK( SavedSearches::getSynced().historySize() == defaultSavedSearches.historySize() );
+    CHECK( RecentFiles::getSynced().filesHistoryMaxItems()
+           == defaultRecentFiles.filesHistoryMaxItems() );
+
+    const auto restoredOpenFileShortcuts
+        = ShortcutAction::shortcutKeys( ShortcutAction::MainWindowOpenFile,
+                                        restoredConfig.shortcuts() );
+    const auto defaultOpenFileShortcuts
+        = ShortcutAction::shortcutKeys( ShortcutAction::MainWindowOpenFile, {} );
+    CHECK_FALSE( restoredOpenFileShortcuts.contains( QKeySequence( QStringLiteral( "Ctrl+Shift+P" ) ) ) );
+    for ( const auto& defaultShortcut : defaultOpenFileShortcuts ) {
+        CHECK( restoredOpenFileShortcuts.contains( defaultShortcut ) );
+    }
+}
+
 TEST_CASE( "OptionsDialog adb detect button fills the executable field with the resolved adb path" )
 {
-    if ( isHeadlessDialogTestEnvironment() ) {
-        WARN( "OptionsDialog UI coverage is skipped on headless/offscreen platforms" );
+    if ( skipHeadlessOptionsDialogTest() ) {
         return;
     }
 
@@ -364,23 +722,29 @@ TEST_CASE( "AdbLogcatDialog reads adb defaults from configuration and saves edit
     auto& config = Configuration::getSynced();
     config.setAdbExecutable( QStringLiteral( "/configured/adb" ) );
     config.setAdbLogcatExtraArgs( QStringLiteral( "-v color" ) );
+    config.setAdbLogcatAnsiOutputEnabled( true );
     config.save();
 
     AdbLogcatDialog dialog;
     auto* adbExecutableEdit = dialog.findChild<QLineEdit*>( QStringLiteral( "adbExecutableEdit" ) );
     auto* extraArgsEdit = dialog.findChild<QLineEdit*>( QStringLiteral( "extraArgsEdit" ) );
+    auto* ansiOutputCheckBox
+        = dialog.findChild<QCheckBox*>( QStringLiteral( "ansiOutputCheckBox" ) );
     auto* deviceCombo = dialog.findChild<QComboBox*>( QStringLiteral( "deviceCombo" ) );
     auto* buttonBox = dialog.findChild<QDialogButtonBox*>( QStringLiteral( "buttonBox" ) );
 
     REQUIRE( adbExecutableEdit != nullptr );
     REQUIRE( extraArgsEdit != nullptr );
     REQUIRE( deviceCombo != nullptr );
+    REQUIRE( ansiOutputCheckBox != nullptr );
     REQUIRE( buttonBox != nullptr );
     REQUIRE( adbExecutableEdit->text() == QStringLiteral( "/configured/adb" ) );
     REQUIRE( extraArgsEdit->text() == QStringLiteral( "-v color" ) );
+    REQUIRE( ansiOutputCheckBox->isChecked() );
 
     adbExecutableEdit->setText( QStringLiteral( "/saved/adb" ) );
     extraArgsEdit->setText( QStringLiteral( "-v threadtime *:I" ) );
+    ansiOutputCheckBox->setChecked( false );
     deviceCombo->addItem( QStringLiteral( "Pixel 8 (ABC123)" ), QStringLiteral( "ABC123" ) );
     deviceCombo->setCurrentIndex( 0 );
     QCoreApplication::processEvents();
@@ -390,6 +754,7 @@ TEST_CASE( "AdbLogcatDialog reads adb defaults from configuration and saves edit
     REQUIRE( sessionData.deviceSerial == QStringLiteral( "ABC123" ) );
     REQUIRE( sessionData.deviceDescription == QStringLiteral( "Pixel 8 (ABC123)" ) );
     REQUIRE( sessionData.extraArgs == QStringLiteral( "-v threadtime *:I" ) );
+    REQUIRE_FALSE( sessionData.ansiOutputEnabled );
     REQUIRE_FALSE( sessionData.captureId.isEmpty() );
 
     auto* okButton = buttonBox->button( QDialogButtonBox::Ok );
@@ -400,6 +765,84 @@ TEST_CASE( "AdbLogcatDialog reads adb defaults from configuration and saves edit
     auto& restoredConfig = Configuration::getSynced();
     REQUIRE( restoredConfig.adbExecutable() == QStringLiteral( "/saved/adb" ) );
     REQUIRE( restoredConfig.adbLogcatExtraArgs() == QStringLiteral( "-v threadtime *:I" ) );
+    REQUIRE_FALSE( restoredConfig.adbLogcatAnsiOutputEnabled() );
+}
+
+TEST_CASE( "iOS log stream session data serializes its source type" )
+{
+    const AdbLogcatSessionData iosSessionData{
+        QStringLiteral( "/opt/homebrew/bin/pymobiledevice3" ),
+        QStringLiteral( "00008030-001C195E36D8802E" ),
+        QStringLiteral( "iPhone Test" ),
+        QStringLiteral( "--network" ),
+        QStringLiteral( "ios-capture" ),
+        QStringLiteral( "/tmp/ios.log" ),
+        LiveLogSourceType::IosLogStream,
+        true,
+    };
+
+    const auto json = QString::fromUtf8(
+        QJsonDocument( iosSessionData.toJson() ).toJson( QJsonDocument::Compact ) );
+    const auto restored = AdbLogcatSessionData::fromJson( json );
+
+    REQUIRE( restored.sourceType == LiveLogSourceType::IosLogStream );
+    REQUIRE( restored.documentId() == QStringLiteral( "ios-log://ios-capture" ) );
+    REQUIRE( restored.persistedSourceType() == QStringLiteral( "ios_log_stream" ) );
+    REQUIRE( restored.deviceSerial == QStringLiteral( "00008030-001C195E36D8802E" ) );
+    REQUIRE( restored.extraArgs == QStringLiteral( "--network" ) );
+    REQUIRE( restored.ansiOutputEnabled );
+}
+
+TEST_CASE( "AdbLogcatSource clears and restarts iOS log streams without remote clear" )
+{
+#ifdef Q_OS_WIN
+    WARN( "Skipping POSIX shell based iOS stream restart test on Windows." );
+    return;
+#else
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    const auto scriptPath = tempDir.filePath( QStringLiteral( "pymobiledevice3" ) );
+    QFile script( scriptPath );
+    REQUIRE( script.open( QIODevice::WriteOnly | QIODevice::Text ) );
+    script.write( "#!/bin/sh\n"
+                  "i=1\n"
+                  "while :; do\n"
+                  "  echo ios-live-line-$i\n"
+                  "  i=$((i + 1))\n"
+                  "  sleep 0.05\n"
+                  "done\n" );
+    script.close();
+    REQUIRE( script.setPermissions( QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner ) );
+
+    const auto captureId = makeCaptureId();
+    auto logData = std::make_shared<StreamingLogData>( captureId, tempDir.path() );
+    const AdbLogcatSessionData sessionData{
+        scriptPath,
+        QStringLiteral( "00008030-001C195E36D8802E" ),
+        QStringLiteral( "iPhone Test" ),
+        QString{},
+        captureId,
+        QString{},
+        LiveLogSourceType::IosLogStream,
+    };
+
+    AdbLogcatSource source( sessionData, logData );
+
+    REQUIRE( source.connectSource() );
+    REQUIRE( source.state() == AdbLogcatSource::State::Connected );
+    REQUIRE( waitForLineCount( logData, 1 ) );
+
+    REQUIRE( source.clearAndRestart() );
+    REQUIRE( source.state() == AdbLogcatSource::State::Connected );
+    REQUIRE( source.lastError().isEmpty() );
+    REQUIRE( waitForLineCount( logData, 1 ) );
+
+    source.disconnectSource();
+    QCoreApplication::processEvents();
+    QTest::qWait( 200 );
+    QCoreApplication::processEvents();
+#endif
 }
 
 // ----------------------------------------------------------------------------

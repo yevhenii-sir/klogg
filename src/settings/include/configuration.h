@@ -426,6 +426,42 @@ class Configuration final : public Persistable<Configuration> {
         adbLogcatExtraArgs_ = std::move( adbLogcatExtraArgs );
     }
 
+    bool adbLogcatAnsiOutputEnabled() const
+    {
+        return adbLogcatAnsiOutputEnabled_;
+    }
+    void setAdbLogcatAnsiOutputEnabled( bool enabled )
+    {
+        adbLogcatAnsiOutputEnabled_ = enabled;
+    }
+
+    QString iosLogExecutable() const
+    {
+        return iosLogExecutable_;
+    }
+    void setIosLogExecutable( QString iosLogExecutable )
+    {
+        iosLogExecutable_ = std::move( iosLogExecutable );
+    }
+
+    QString iosLogExtraArgs() const
+    {
+        return iosLogExtraArgs_;
+    }
+    void setIosLogExtraArgs( QString iosLogExtraArgs )
+    {
+        iosLogExtraArgs_ = std::move( iosLogExtraArgs );
+    }
+
+    bool iosLogAnsiOutputEnabled() const
+    {
+        return iosLogAnsiOutputEnabled_;
+    }
+    void setIosLogAnsiOutputEnabled( bool enabled )
+    {
+        iosLogAnsiOutputEnabled_ = enabled;
+    }
+
     bool forceFontAntialiasing() const
     {
         return forceFontAntialiasing_;
@@ -569,6 +605,14 @@ class Configuration final : public Persistable<Configuration> {
     {
         hideAnsiColorSequences_ = hide;
     }
+    bool renderAnsiColorSequences() const
+    {
+        return renderAnsiColorSequences_;
+    }
+    void setRenderAnsiColorSequences( bool render )
+    {
+        renderAnsiColorSequences_ = render;
+    }
 
     int defaultEncodingMib() const
     {
@@ -647,6 +691,10 @@ class Configuration final : public Persistable<Configuration> {
     bool verifySslPeers_ = true;
     QString adbExecutable_;
     QString adbLogcatExtraArgs_;
+    bool adbLogcatAnsiOutputEnabled_ = false;
+    QString iosLogExecutable_;
+    QString iosLogExtraArgs_;
+    bool iosLogAnsiOutputEnabled_ = false;
 
     bool forceFontAntialiasing_ = false;
     bool enableQtHighDpi_ = true;
@@ -667,6 +715,7 @@ class Configuration final : public Persistable<Configuration> {
     bool optimizeForNotLatinEncodings_ = false;
 
     bool hideAnsiColorSequences_ = false;
+    bool renderAnsiColorSequences_ = false;
 
     int defaultEncodingMib_ = 106; // UTF-8
 

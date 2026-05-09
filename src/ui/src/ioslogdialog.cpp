@@ -1,54 +1,56 @@
-#include "adblogcatdialog.h"
+#include "ioslogdialog.h"
 
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
-#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QUuid>
 
-#include "adbprocesstransport.h"
 #include "configuration.h"
+#include "ioslogprocesstransport.h"
 
-AdbLogcatDialog::AdbLogcatDialog( QWidget* parent )
+IosLogDialog::IosLogDialog( QWidget* parent )
     : QDialog( parent )
 {
-    setWindowTitle( tr( "Open ADB Logcat" ) );
+    setWindowTitle( tr( "Open iOS Log Stream" ) );
     setModal( true );
     resize( 720, 220 );
 
     auto* rootLayout = new QVBoxLayout( this );
     auto* formLayout = new QFormLayout();
 
-    auto* adbRowLayout = new QHBoxLayout();
-    adbExecutableEdit_ = new QLineEdit( this );
-    adbExecutableEdit_->setObjectName( QStringLiteral( "adbExecutableEdit" ) );
+    auto* executableRowLayout = new QHBoxLayout();
+    executableEdit_ = new QLineEdit( this );
+    executableEdit_->setObjectName( QStringLiteral( "iosLogExecutableEdit" ) );
+    executableEdit_->setPlaceholderText( QStringLiteral( "pymobiledevice3" ) );
     refreshButton_ = new QPushButton( tr( "Refresh Devices" ), this );
     refreshButton_->setObjectName( QStringLiteral( "refreshDevicesButton" ) );
-    adbRowLayout->addWidget( adbExecutableEdit_ );
-    adbRowLayout->addWidget( refreshButton_ );
+    executableRowLayout->addWidget( executableEdit_ );
+    executableRowLayout->addWidget( refreshButton_ );
 
     deviceCombo_ = new QComboBox( this );
     deviceCombo_->setObjectName( QStringLiteral( "deviceCombo" ) );
     deviceCombo_->setSizeAdjustPolicy( QComboBox::AdjustToContents );
     extraArgsEdit_ = new QLineEdit( this );
     extraArgsEdit_->setObjectName( QStringLiteral( "extraArgsEdit" ) );
-    extraArgsEdit_->setPlaceholderText( tr( "Optional logcat args, appended after 'adb -s <serial> logcat'" ) );
+    extraArgsEdit_->setPlaceholderText(
+        tr( "Optional args, appended after 'pymobiledevice3 syslog live --udid <udid>'" ) );
     ansiOutputCheckBox_ = new QCheckBox( tr( "Enable ANSI color output" ), this );
     ansiOutputCheckBox_->setObjectName( QStringLiteral( "ansiOutputCheckBox" ) );
 
-    formLayout->addRow( tr( "ADB executable" ), adbRowLayout );
+    formLayout->addRow( tr( "pymobiledevice3 executable" ), executableRowLayout );
     formLayout->addRow( tr( "Device" ), deviceCombo_ );
-    formLayout->addRow( tr( "Extra logcat args" ), extraArgsEdit_ );
+    formLayout->addRow( tr( "Extra iOS log args" ), extraArgsEdit_ );
     formLayout->addRow( QString{}, ansiOutputCheckBox_ );
 
     statusLabel_ = new QLabel( this );
-    statusLabel_->setObjectName( QStringLiteral( "adbStatusLabel" ) );
+    statusLabel_->setObjectName( QStringLiteral( "iosLogStatusLabel" ) );
     statusLabel_->setWordWrap( true );
 
     buttonBox_ = new QDialogButtonBox( QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this );
@@ -58,9 +60,9 @@ AdbLogcatDialog::AdbLogcatDialog( QWidget* parent )
     rootLayout->addWidget( statusLabel_ );
     rootLayout->addWidget( buttonBox_ );
 
-    connect( refreshButton_, &QPushButton::clicked, this, &AdbLogcatDialog::refreshDevices );
+    connect( refreshButton_, &QPushButton::clicked, this, &IosLogDialog::refreshDevices );
     connect( deviceCombo_, qOverload<int>( &QComboBox::currentIndexChanged ), this,
-             &AdbLogcatDialog::updateAcceptState );
+             &IosLogDialog::updateAcceptState );
     connect( buttonBox_, &QDialogButtonBox::accepted, this, [ this ] {
         saveSettings();
         accept();
@@ -68,36 +70,36 @@ AdbLogcatDialog::AdbLogcatDialog( QWidget* parent )
     connect( buttonBox_, &QDialogButtonBox::rejected, this, &QDialog::reject );
 
     loadSettings();
-    refreshDevices();
+    QTimer::singleShot( 0, this, &IosLogDialog::refreshDevices );
 }
 
-AdbLogcatSessionData AdbLogcatDialog::sessionData() const
+AdbLogcatSessionData IosLogDialog::sessionData() const
 {
     return AdbLogcatSessionData{
-        adbExecutableEdit_->text().trimmed(),
+        executableEdit_->text().trimmed(),
         deviceCombo_->currentData( Qt::UserRole ).toString(),
         deviceCombo_->currentText(),
         extraArgsEdit_->text().trimmed(),
         QUuid::createUuid().toString( QUuid::WithoutBraces ),
         {},
-        LiveLogSourceType::AdbLogcat,
+        LiveLogSourceType::IosLogStream,
         ansiOutputCheckBox_->isChecked(),
     };
 }
 
-void AdbLogcatDialog::refreshDevices()
+void IosLogDialog::refreshDevices()
 {
     deviceCombo_->clear();
 
     QString error;
-    const auto devices = AdbProcessTransport::listDevices( adbExecutableEdit_->text(), &error );
+    const auto devices = IosLogProcessTransport::listDevices( executableEdit_->text(), &error );
     for ( const auto& device : devices ) {
-        deviceCombo_->addItem( device.displayName, device.serial );
+        deviceCombo_->addItem( device.displayName, device.udid );
         deviceCombo_->setItemData( deviceCombo_->count() - 1, device.description, Qt::ToolTipRole );
     }
 
     if ( devices.isEmpty() ) {
-        statusLabel_->setText( error.isEmpty() ? tr( "No online ADB devices detected." ) : error );
+        statusLabel_->setText( error.isEmpty() ? tr( "No iOS devices detected." ) : error );
     }
     else {
         statusLabel_->setText(
@@ -107,26 +109,26 @@ void AdbLogcatDialog::refreshDevices()
     updateAcceptState();
 }
 
-void AdbLogcatDialog::updateAcceptState()
+void IosLogDialog::updateAcceptState()
 {
     if ( auto* okButton = buttonBox_->button( QDialogButtonBox::Ok ) ) {
         okButton->setEnabled( deviceCombo_->count() > 0 && deviceCombo_->currentIndex() >= 0 );
     }
 }
 
-void AdbLogcatDialog::loadSettings()
+void IosLogDialog::loadSettings()
 {
     const auto& config = Configuration::get();
-    adbExecutableEdit_->setText( config.adbExecutable() );
-    extraArgsEdit_->setText( config.adbLogcatExtraArgs() );
-    ansiOutputCheckBox_->setChecked( config.adbLogcatAnsiOutputEnabled() );
+    executableEdit_->setText( config.iosLogExecutable() );
+    extraArgsEdit_->setText( config.iosLogExtraArgs() );
+    ansiOutputCheckBox_->setChecked( config.iosLogAnsiOutputEnabled() );
 }
 
-void AdbLogcatDialog::saveSettings() const
+void IosLogDialog::saveSettings() const
 {
     auto& config = Configuration::get();
-    config.setAdbExecutable( adbExecutableEdit_->text().trimmed() );
-    config.setAdbLogcatExtraArgs( extraArgsEdit_->text().trimmed() );
-    config.setAdbLogcatAnsiOutputEnabled( ansiOutputCheckBox_->isChecked() );
+    config.setIosLogExecutable( executableEdit_->text().trimmed() );
+    config.setIosLogExtraArgs( extraArgsEdit_->text().trimmed() );
+    config.setIosLogAnsiOutputEnabled( ansiOutputCheckBox_->isChecked() );
     config.save();
 }

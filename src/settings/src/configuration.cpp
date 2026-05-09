@@ -281,6 +281,18 @@ void Configuration::retrieveFromStorage( QSettings& settings )
     adbLogcatExtraArgs_
         = settings.value( "adb.logcatExtraArgs", DefaultConfiguration.adbLogcatExtraArgs_ )
               .toString();
+    adbLogcatAnsiOutputEnabled_
+        = settings
+              .value( "adb.logcatAnsiOutput",
+                      DefaultConfiguration.adbLogcatAnsiOutputEnabled_ )
+              .toBool();
+    iosLogExecutable_
+        = settings.value( "iosLog.executable", DefaultConfiguration.iosLogExecutable_ ).toString();
+    iosLogExtraArgs_
+        = settings.value( "iosLog.extraArgs", DefaultConfiguration.iosLogExtraArgs_ ).toString();
+    iosLogAnsiOutputEnabled_
+        = settings.value( "iosLog.ansiOutput", DefaultConfiguration.iosLogAnsiOutputEnabled_ )
+              .toBool();
 
     // View settings
     overviewVisible_
@@ -300,6 +312,13 @@ void Configuration::retrieveFromStorage( QSettings& settings )
         = settings
               .value( "view.hideAnsiColorSequences", DefaultConfiguration.hideAnsiColorSequences_ )
               .toBool();
+    renderAnsiColorSequences_
+        = settings
+              .value( "view.renderAnsiColorSequences", DefaultConfiguration.renderAnsiColorSequences_ )
+              .toBool();
+    if ( hideAnsiColorSequences_ && renderAnsiColorSequences_ ) {
+        renderAnsiColorSequences_ = false;
+    }
 
     useTextWrap_ = settings.value( "view.textWrap", DefaultConfiguration.useTextWrap() ).toBool();
 
@@ -450,6 +469,10 @@ void Configuration::saveToStorage( QSettings& settings ) const
     settings.setValue( "net.verifySslPeers", verifySslPeers_ );
     settings.setValue( "adb.executable", adbExecutable_ );
     settings.setValue( "adb.logcatExtraArgs", adbLogcatExtraArgs_ );
+    settings.setValue( "adb.logcatAnsiOutput", adbLogcatAnsiOutputEnabled_ );
+    settings.setValue( "iosLog.executable", iosLogExecutable_ );
+    settings.setValue( "iosLog.extraArgs", iosLogExtraArgs_ );
+    settings.setValue( "iosLog.ansiOutput", iosLogAnsiOutputEnabled_ );
 
     settings.setValue( "view.overviewVisible", overviewVisible_ );
     settings.setValue( "view.lineNumbersVisibleInMain", lineNumbersVisibleInMain_ );
@@ -464,6 +487,7 @@ void Configuration::saveToStorage( QSettings& settings ) const
     settings.setValue( "view.scaleFactorRounding", scaleFactorRounding_ );
 
     settings.setValue( "view.hideAnsiColorSequences", hideAnsiColorSequences_ );
+    settings.setValue( "view.renderAnsiColorSequences", renderAnsiColorSequences_ );
 
     settings.setValue( "defaultView.searchAutoRefresh", searchAutoRefresh_ );
     settings.setValue( "defaultView.searchIgnoreCase", searchIgnoreCase_ );

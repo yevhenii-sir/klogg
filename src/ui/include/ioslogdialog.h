@@ -1,5 +1,5 @@
-#ifndef ADBLOGCATDIALOG_H
-#define ADBLOGCATDIALOG_H
+#ifndef IOSLOGDIALOG_H
+#define IOSLOGDIALOG_H
 
 #include <QDialog>
 
@@ -12,11 +12,11 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 
-class AdbLogcatDialog : public QDialog {
+class IosLogDialog : public QDialog {
     Q_OBJECT
 
   public:
-    explicit AdbLogcatDialog( QWidget* parent = nullptr );
+    explicit IosLogDialog( QWidget* parent = nullptr );
 
     AdbLogcatSessionData sessionData() const;
 
@@ -29,7 +29,7 @@ class AdbLogcatDialog : public QDialog {
     void saveSettings() const;
 
   private:
-    QLineEdit* adbExecutableEdit_ = nullptr;
+    QLineEdit* executableEdit_ = nullptr;
     QPushButton* refreshButton_ = nullptr;
     QComboBox* deviceCombo_ = nullptr;
     QLineEdit* extraArgsEdit_ = nullptr;
