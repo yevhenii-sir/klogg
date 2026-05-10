@@ -44,4 +44,4 @@ Several usability improvements for all versions:
 
 As usual 3rdparty libraries were updated, some bugs were fixed, and some more were introduced.
 
-Download on Github: [klogg 20.4](https://github.com/variar/klogg/releases/tag/v20.4)
+Download on Github: [klogg 20.4](https://github.com/ZEACENT/klogg/releases/tag/v20.4)

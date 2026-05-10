@@ -58,12 +58,12 @@ only convert input data to UTF-16. In order to use other libraries UTF-16 string
 be encoded to UTF-8. That additional overhead has to be taken into account when evaluating
 other regular expression engines.
 
-Several articles pointed out that [Hyperscan](https://www.hyperscan.io/) library shows 
+Several articles pointed out that [Hyperscan](https://intel.github.io/hyperscan/) library shows
 very promising results. For example, Rust Leipzig's [research](https://rust-leipzig.github.io/regex/2017/03/28/comparison-of-regex-engines/) claimed that Hyperscan can be 3 times faster than PCRE2.
-This result appears in another [article](https://software.intel.com/content/www/us/en/develop/articles/why-and-how-to-replace-pcre-with-hyperscan.html) from Intel. 
+This result appears in another [article](https://www.intel.com/content/www/us/en/develop/articles/why-and-how-to-replace-pcre-with-hyperscan.html) from Intel.
 
 I decided that the 3x speedup is so huge, that text re-encoding overhead can be ignored. 
-Integrating Hyperscan was rather easy, thanks to good [documentation](http://intel.github.io/hyperscan/dev-reference/).
+Integrating Hyperscan was rather easy, thanks to good [documentation](https://intel.github.io/hyperscan/dev-reference/).
 It is a C library, so some RAII had to be implemented to avoid memory leaks.
 
 The results for the same file now looks like this:

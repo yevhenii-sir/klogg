@@ -35,4 +35,4 @@ Bugixes and minor improvements
  - Use DejaVu fonts by default
  - Updated 3rdparty libraries
 
-Download on Github: [klogg 20.12](https://github.com/variar/klogg/releases/tag/v20.12)
+Download on Github: [klogg 20.12](https://github.com/ZEACENT/klogg/releases/tag/v20.12)

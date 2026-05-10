@@ -318,7 +318,7 @@ Testing builds will check for new testing versions.
 #### Font
 
 The font used to display the log file. A clear, monospace font (like the
-free, open source, [DejaVu Mono](http://www.dejavu-fonts.org) for
+free, open source, [DejaVu Mono](https://dejavu-fonts.org/) for
 example, is recommended.
 
 Font antialiasing can be forced if auto-detected options result in low-quality

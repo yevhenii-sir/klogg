@@ -715,6 +715,7 @@ jobs:
           rm -f /tmp/gh_tag_delete_err
 
       - name: Create pre-release (continuous)
+        id: create_release
         if: env.GITHUB_TOKEN != ''
         uses: softprops/action-gh-release@v1
         with:
@@ -738,20 +739,16 @@ jobs:
         if: env.GITHUB_TOKEN != ''
         env:
           GITHUB_TOKEN: ${{ secrets.KLOGG_GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.create_release.outputs.id }}
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
-          # Wait for release creation to propagate (API may have brief delay)
-          release_id=""
-          for i in 1 2 3; do
-            release_id="$(gh api "/repos/${repo}/releases/tags/continuous" --jq '.id' 2>/dev/null)" && break
-            echo "Release not found yet, retrying in 5s... ($i/3)"
-            sleep 5
-          done
+          release_id="${RELEASE_ID}"
           if [ -z "${release_id}" ]; then
-            echo "::error::Failed to find continuous release after retries"
+            echo "::error::No release ID from create_release step"
             exit 1
           fi
+          echo "Enforcing flags on release ${release_id}"
           gh api -X PATCH "/repos/${repo}/releases/${release_id}" \
             -f draft=false \
             -f prerelease=true >/dev/null
@@ -760,21 +757,20 @@ jobs:
         if: env.GITHUB_TOKEN != ''
         env:
           GITHUB_TOKEN: ${{ secrets.KLOGG_GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.create_release.outputs.id }}
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
-          # Retry to handle brief API propagation delay
-          draft=""
-          prerelease=""
-          for i in 1 2 3; do
-            draft="$(gh api "/repos/${repo}/releases/tags/continuous" --jq '.draft' 2>/dev/null)" \
-              && prerelease="$(gh api "/repos/${repo}/releases/tags/continuous" --jq '.prerelease' 2>/dev/null)" \
-              && break
-            sleep 3
-          done
+          release_id="${RELEASE_ID}"
+          if [ -z "${release_id}" ]; then
+            echo "::error::No release ID from create_release step"
+            exit 1
+          fi
+          draft="$(gh api "/repos/${repo}/releases/${release_id}" --jq '.draft')"
+          prerelease="$(gh api "/repos/${repo}/releases/${release_id}" --jq '.prerelease')"
 
           echo "continuous release flags: draft=${draft} prerelease=${prerelease}"
           if [ "${draft}" != "false" ] || [ "${prerelease}" != "true" ]; then
-            gh api "/repos/${repo}/releases/tags/continuous" --jq '{id,tag_name,html_url,draft,prerelease,target_commitish}'
+            gh api "/repos/${repo}/releases/${release_id}" --jq '{id,tag_name,html_url,draft,prerelease,target_commitish}'
             exit 1
           fi

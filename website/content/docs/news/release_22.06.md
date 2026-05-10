@@ -53,4 +53,4 @@ On some Windows 11 systems klogg crashes when trying to show an open file dialog
 
 Big thanks for everyone who provided feedback and feature requests!
 
-Download on Github: [klogg 22.06](https://github.com/variar/klogg/releases/tag/v22.06)
+Download on Github: [klogg 22.06](https://github.com/ZEACENT/klogg/releases/tag/v22.06)

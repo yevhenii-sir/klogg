@@ -15,9 +15,9 @@ and I was able to do some bugfix and new feature development.
 
 Preview builds can be downloaded from Github: 
 
-{{< button href="https://github.com/variar/klogg/releases/tag/continuous-win" >}}Windows{{< /button >}}
-{{< button href="https://github.com/variar/klogg/releases/tag/continuous-linux" >}}Linux{{< /button >}}
-{{< button href="https://github.com/variar/klogg/releases/tag/continuous-osx" >}}Mac{{< /button >}}
+{{< button href="https://github.com/ZEACENT/klogg/releases/tag/continuous-win" >}}Windows{{< /button >}}
+{{< button href="https://github.com/ZEACENT/klogg/releases/tag/continuous-linux" >}}Linux{{< /button >}}
+{{< button href="https://github.com/ZEACENT/klogg/releases/tag/continuous-osx" >}}Mac{{< /button >}}
 
 Feedback is very welcome.
 

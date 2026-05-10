@@ -13,8 +13,8 @@ conflicts=('klogg-bin')
 depends=('qt5-base' 'hicolor-icon-theme' 'xxhash' 'uchardet' 'tbb')
 makedepends=('boost' 'cmake' 'git' 'ragel')
 
-source=("${pkgname}-${pkgver}.tar.gz::https://github.com/variar/klogg/archive/refs/tags/v${pkgver}.tar.gz"
-        "https://github.com/variar/klogg/releases/download/v${pkgver}/${pkgname}-${pkgver}.${_subversion}.deps.tar.gz")
+source=("${pkgname}-${pkgver}.tar.gz::https://github.com/ZEACENT/klogg/archive/refs/tags/v${pkgver}.tar.gz"
+        "https://github.com/ZEACENT/klogg/releases/download/v${pkgver}/${pkgname}-${pkgver}.${_subversion}.deps.tar.gz")
 sha256sums=('a6a68b45d828a0de34572a77a25cb0bac7ce15f7e0328b4f4dae573b990e3970'
             'c9316454cbca126ee7fb55dd7b3af5bab92a914ec4df950fcf7c435a2f2c8276')
 

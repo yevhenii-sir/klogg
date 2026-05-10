@@ -60,7 +60,7 @@ help to improve project documentation.
 Klogg has become a quite complex tool with many features. Any time spent fixing
 typos or clarifying sections in the documentation is greatly appreciated.
 Features that need better documentation can be found in this 
-[list](https://github.com/variar/klogg/issues?q=is%3Aissue+label%3A%22status%3A+need+documentation%22+). 
+[list](https://github.com/ZEACENT/klogg/issues?q=is%3Aissue+label%3A%22status%3A+need+documentation%22+). 
 Both open and closed issues marked with label `status: need documentation`
 require some work with documentation.
 
@@ -68,14 +68,14 @@ require some work with documentation.
 
 Unsure where to begin contributing to Klogg? 
 You can start by looking through these issues:
-- [Good first issues](https://github.com/variar/klogg/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22+sort%3Acomments-desc) -
+- [Good first issues](https://github.com/ZEACENT/klogg/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22+sort%3Acomments-desc) -
  issues which should only require a few lines of code.
-- [Help wanted issues](https://github.com/variar/klogg/issues?q=is%3Aissue+is%3Aopen+sort%3Acomments-desc+label%3A%22help+wanted%22) -
+- [Help wanted issues](https://github.com/ZEACENT/klogg/issues?q=is%3Aissue+is%3Aopen+sort%3Acomments-desc+label%3A%22help+wanted%22) -
  issues which should be a bit more involved, required some discussion.
 
 Both issue lists are sorted by total number of comments. While not perfect, number of comments is a reasonable proxy for impact a given change will have.
 
-Working on your first Pull Request? You can learn how from this free series, [How to Contribute to an Open Source Project on GitHub](https://egghead.io/series/how-to-contribute-to-an-open-source-project-on-github).
+Working on your first Pull Request? You can learn how from the [GitHub docs on contributing to open source](https://docs.github.com/en/get-started/exploring-projects-on-github/contributing-to-a-project).
 
 At this point, you're ready to make your changes! Feel free to ask for help; everyone is a beginner at first :smile_cat:
 

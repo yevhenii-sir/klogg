@@ -31,5 +31,5 @@ This release has following changes:
  - 3rdparty libraries updates
 
 
-Download on Github: [klogg 19.9](https://github.com/variar/klogg/releases/tag/v19.9)
+Download on Github: [klogg 19.9](https://github.com/ZEACENT/klogg/releases/tag/v19.9)
 

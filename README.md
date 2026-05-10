@@ -1,7 +1,7 @@
 [![GitHub license](https://img.shields.io/github/license/ZEACENT/klogg.svg?style=flat)](https://github.com/ZEACENT/klogg/blob/master/COPYING)
 [![C++](https://img.shields.io/github/languages/top/ZEACENT/klogg?style=flat)]()
 [![GitHub contributors](https://img.shields.io/github/contributors/ZEACENT/klogg.svg?style=flat)](https://github.com/ZEACENT/klogg/graphs/contributors/)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat)](http://makeapullrequest.com)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat)](https://makeapullrequest.com/)
 [![Github all releases](https://img.shields.io/github/downloads/ZEACENT/klogg/total?style=flat)](https://github.com/ZEACENT/klogg/releases/)
 [![Github](https://img.shields.io/github/v/release/ZEACENT/klogg?style=flat&label=Stable%20release)](https://github.com/ZEACENT/klogg/releases/latest)
 [![CI Build](https://github.com/ZEACENT/klogg/actions/workflows/ci-build.yml/badge.svg)](https://github.com/ZEACENT/klogg/actions/workflows/ci-build.yml)
