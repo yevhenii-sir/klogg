@@ -71,7 +71,7 @@ TEST_CASE( "parsePymobiledeviceDeviceList excludes BuildVersion ConnectionType D
         "\"ProductVersion\":\"17.0\","
         "\"BuildVersion\":\"21A329\","
         "\"ConnectionType\":\"USB\","
-        "\"DeviceClass\":\"iPhone\""
+        "\"DeviceClass\":\"Smartphone\""
         "}]";
 
     const auto devices = parsePymobiledeviceDeviceList( json );
@@ -80,7 +80,22 @@ TEST_CASE( "parsePymobiledeviceDeviceList excludes BuildVersion ConnectionType D
     const auto& name = devices[ 0 ].displayName;
     CHECK_FALSE( name.contains( QStringLiteral( "21A329" ) ) );
     CHECK_FALSE( name.contains( QStringLiteral( "USB" ) ) );
-    CHECK_FALSE( name.contains( QStringLiteral( "DeviceClass" ) ) );
+    CHECK_FALSE( name.contains( QStringLiteral( "Smartphone" ) ) );
+}
+
+TEST_CASE( "parsePymobiledeviceDeviceList does not promote DeviceClass into displayName" )
+{
+    const QByteArray json = "[{"
+        "\"Identifier\":\"00008030\","
+        "\"DeviceName\":\"My Tablet\","
+        "\"DeviceClass\":\"AppleTV\","
+        "\"ProductVersion\":\"17.0\""
+        "}]";
+
+    const auto devices = parsePymobiledeviceDeviceList( json );
+    REQUIRE( devices.size() == 1 );
+    CHECK_FALSE( devices[ 0 ].displayName.contains( QStringLiteral( "AppleTV" ) ) );
+    CHECK( devices[ 0 ].productType.isEmpty() );
 }
 
 TEST_CASE( "parsePymobiledeviceDeviceList strips ANSI sequences from JSON values" )
@@ -176,10 +191,55 @@ TEST_CASE( "parsePymobiledeviceDeviceList parses real pymobiledevice3 output" )
     CHECK( device.displayName.contains( QStringLiteral( "iPhone18,3" ) ) );
     CHECK( device.displayName.contains( QStringLiteral( "26.4.2" ) ) );
 
-    // Should NOT contain BuildVersion, ConnectionType, DeviceClass
+    // Should NOT contain BuildVersion or ConnectionType values
     CHECK_FALSE( device.displayName.contains( QStringLiteral( "23E261" ) ) );
     CHECK_FALSE( device.displayName.contains( QStringLiteral( "USB" ) ) );
-    CHECK_FALSE( device.displayName.contains( QStringLiteral( "DeviceClass" ) ) );
+}
+
+TEST_CASE( "parsePymobiledeviceDeviceList strips ANSI codes wrapping JSON before parsing" )
+{
+    // pymobiledevice3 may emit ANSI-colored output where escape codes appear
+    // outside the JSON structure, e.g. \x1b[32m[...]\x1b[0m
+    // Without pre-stripping, QJsonDocument::fromJson fails and the fallback
+    // parser treats each line of pretty-printed JSON as a separate device.
+    const QByteArray jsonWithAnsiPrefix
+        = "\x1b[32m[{"
+          "\"Identifier\":\"00008150-001431410C78401C\","
+          "\"DeviceName\":\"Test iPhone\","
+          "\"ProductType\":\"iPhone18,3\","
+          "\"ProductVersion\":\"26.4.2\""
+          "}]\x1b[0m";
+
+    const auto devices = parsePymobiledeviceDeviceList( jsonWithAnsiPrefix );
+    REQUIRE( devices.size() == 1 );
+    CHECK( devices[ 0 ].udid == QStringLiteral( "00008150-001431410C78401C" ) );
+    CHECK( devices[ 0 ].productType == QStringLiteral( "iPhone18,3" ) );
+    CHECK( devices[ 0 ].productVersion == QStringLiteral( "26.4.2" ) );
+
+    // displayName must be a single line
+    CHECK_FALSE( devices[ 0 ].displayName.contains( QLatin1Char( '\n' ) ) );
+    CHECK( devices[ 0 ].displayName.contains( QStringLiteral( "Test iPhone" ) ) );
+}
+
+TEST_CASE( "parsePymobiledeviceDeviceList handles ANSI codes around pretty-printed JSON" )
+{
+    // Real pymobiledevice3 output: pretty-printed JSON with ANSI color
+    const QByteArray prettyJsonWithAnsi
+        = "\x1b[1m[\x1b[0m\n"
+          "\x1b[1m  {\x1b[0m\n"
+          "    \x1b[33m\"Identifier\"\x1b[0m: \x1b[36m\"00008150\"\x1b[0m,\n"
+          "    \x1b[33m\"DeviceName\"\x1b[0m: \x1b[36m\"My iPhone\"\x1b[0m,\n"
+          "    \x1b[33m\"ProductType\"\x1b[0m: \x1b[36m\"iPhone18,3\"\x1b[0m,\n"
+          "    \x1b[33m\"ProductVersion\"\x1b[0m: \x1b[36m\"26.4\"\x1b[0m\n"
+          "  }\n"
+          "]\n";
+
+    const auto devices = parsePymobiledeviceDeviceList( prettyJsonWithAnsi );
+    REQUIRE( devices.size() == 1 );
+    CHECK( devices[ 0 ].udid == QStringLiteral( "00008150" ) );
+    CHECK( devices[ 0 ].displayName.contains( QStringLiteral( "My iPhone" ) ) );
+    CHECK( devices[ 0 ].displayName.contains( QStringLiteral( "iPhone18,3" ) ) );
+    CHECK_FALSE( devices[ 0 ].displayName.contains( QLatin1Char( '\n' ) ) );
 }
 
 TEST_CASE( "parsePymobiledeviceDeviceList parses --simple output as UDID-only" )
