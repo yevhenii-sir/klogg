@@ -481,6 +481,27 @@ struct CrawlerWidget::access_by<CrawlerWidgetPrivate> {
         return AbstractLogView::access_by<AbstractLogViewPrivate>::charHeight( crawler->filteredView_ );
     }
 
+    QSize filteredViewportSize() const
+    {
+        return AbstractLogView::access_by<AbstractLogViewPrivate>::viewport( crawler->filteredView_ )
+            ->size();
+    }
+
+    void makeFilteredViewportHeightPartialLine()
+    {
+        for ( int height = 70; height < 130; ++height ) {
+            crawler->filteredView_->setFixedHeight( height );
+            QTest::qWait( 10 );
+            crawler->grab();
+
+            const auto charHeight = filteredCharHeight();
+            const auto viewportHeight = filteredViewportSize().height();
+            if ( charHeight > 0 && viewportHeight % charHeight != 0 ) {
+                return;
+            }
+        }
+    }
+
     void setFilteredLastLineAligned( bool value )
     {
         AbstractLogView::access_by<AbstractLogViewPrivate>::setLastLineAligned( crawler->filteredView_,
@@ -606,20 +627,19 @@ SCENARIO( "Crawler widget search", "[ui]" )
 
             AND_WHEN( "the filtered view is scrolled vertically and horizontally" )
             {
-                crawlerVisitor.resizeViews( 220, 95 );
+                crawlerVisitor.makeFilteredViewportHeightPartialLine();
                 crawlerVisitor.render();
                 crawlerVisitor.scrollFilteredVerticallyToBottom();
                 crawlerVisitor.render();
 
                 THEN( "vertical scrolling aligns content bottom to viewport bottom" )
                 {
-                    // With exact-pixel bottom alignment, the drawing top offset
-                    // may not be a multiple of charHeight — that is expected.
-                    // Instead, verify that content fills the viewport without
-                    // cutting off the last line or leaving a gap at the bottom.
                     const auto offset = qAbs( crawlerVisitor.filteredDrawingTopOffset() );
                     const auto charH = crawlerVisitor.filteredCharHeight();
+                    const auto viewportHeight = crawlerVisitor.filteredViewportSize().height();
+                    REQUIRE( viewportHeight % charH != 0 );
                     REQUIRE( offset >= 0 );
+                    REQUIRE( offset % charH == 0 );
                     // The offset should be at most one viewport's worth of content
                     REQUIRE( offset < charH * 50 );
                 }
@@ -634,6 +654,19 @@ SCENARIO( "Crawler widget search", "[ui]" )
                         const auto offsetBefore = qAbs( crawlerVisitor.filteredDrawingTopOffset() );
                         // The offset should still be valid after horizontal scroll
                         REQUIRE( offsetBefore >= 0 );
+                    }
+                }
+
+                AND_WHEN( "follow mode is enabled at the filtered bottom" )
+                {
+                    const auto offsetBeforeFollow = crawlerVisitor.filteredDrawingTopOffset();
+                    crawlerVisitor.enableFollowMode( true );
+                    crawlerVisitor.render();
+
+                    THEN( "follow mode does not reserve a bottom bar or move the text area" )
+                    {
+                        REQUIRE( crawlerVisitor.isFollowModeEnabled() );
+                        REQUIRE( crawlerVisitor.filteredDrawingTopOffset() == offsetBeforeFollow );
                     }
                 }
             }

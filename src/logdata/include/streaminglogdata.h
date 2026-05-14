@@ -3,11 +3,17 @@
 
 #include <memory>
 
+#include <QFile>
 #include <QRegularExpression>
 #include <QTimer>
 
 #include "capturestore.h"
 #include "searchablelogdata.h"
+
+enum class LiveLogSaveAnsiMode {
+    Strip,
+    Preserve,
+};
 
 class StreamingLogData : public SearchableLogData {
     Q_OBJECT
@@ -20,6 +26,7 @@ class StreamingLogData : public SearchableLogData {
     void finishInput();
     void clearCapture();
     bool bindOutputFile( const QString& outputPath );
+    bool bindOutputFile( const QString& outputPath, LiveLogSaveAnsiMode ansiMode );
     QString boundOutputFile() const;
     QString captureId() const;
     QString capturePath() const;
@@ -55,6 +62,9 @@ class StreamingLogData : public SearchableLogData {
     void scheduleLoadingFinished();
     void startOutputFlushTimer();
     void stopOutputFlushTimer();
+    bool openDisplayOutputFile( const QString& outputPath );
+    void closeDisplayOutputFile();
+    bool writeDisplayLinesToOutput( LineNumber first, LinesCount count );
     klogg::vector<QString> getLines( LineNumber first, LinesCount number ) const;
 
   private:
@@ -64,6 +74,9 @@ class StreamingLogData : public SearchableLogData {
     AnsiProcessingMode ansiProcessingMode_ = AnsiProcessingMode::Plain;
     bool loadingFinishedQueued_ = false;
     QTimer outputFlushTimer_;
+    QString boundOutputFile_;
+    QFile boundOutputHandle_;
+    LiveLogSaveAnsiMode outputSaveAnsiMode_ = LiveLogSaveAnsiMode::Strip;
 };
 
 #endif
