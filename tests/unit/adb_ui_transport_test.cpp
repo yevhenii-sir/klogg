@@ -150,6 +150,27 @@ class TestAdbProcessTransport : public AdbProcessTransport {
     }
 };
 
+class ImmediateFailureAdbProcessTransport : public AdbProcessTransport {
+  public:
+    ImmediateFailureAdbProcessTransport()
+        : AdbProcessTransport( QString{}, QStringLiteral( "serial-123" ), {} )
+    {
+    }
+
+  protected:
+    Command streamingCommand() const override
+    {
+#ifdef Q_OS_WIN
+        return Command{ QStringLiteral( "cmd" ),
+                        { QStringLiteral( "/c" ), QStringLiteral( "exit" ),
+                          QStringLiteral( "/b" ), QStringLiteral( "7" ) } };
+#else
+        return Command{ QStringLiteral( "/bin/sh" ),
+                        { QStringLiteral( "-c" ), QStringLiteral( "exit 7" ) } };
+#endif
+    }
+};
+
 class TestIosLogProcessTransport : public IosLogProcessTransport {
   public:
     using IosLogProcessTransport::IosLogProcessTransport;
@@ -354,15 +375,13 @@ TEST_CASE( "IosLogProcessTransport strips script PTY header from received data" 
         QStringLiteral( "/opt/homebrew/bin/pymobiledevice3" ),
         QStringLiteral( "00008030-001C195E36D8802E" ), QString{}, false );
 
-    // Simulate script's initial output: ^D\b\b followed by actual log data.
+    // Case 1: full prefix arrives in one chunk
     QByteArray ptyOutput = QByteArrayLiteral( "^D" ) + QByteArray( 2, '\b' )
                            + QByteArrayLiteral( "Default 12:34:56 App Message\n" );
     colorTransport.filterReceivedBytesForTest( ptyOutput );
 #ifdef Q_OS_MAC
-    // The ^D\b\b prefix must be stripped; the log line must remain.
     REQUIRE( ptyOutput == QByteArrayLiteral( "Default 12:34:56 App Message\n" ) );
 #else
-    // On non-macOS, no PTY wrapping so no filtering.
     REQUIRE( ptyOutput.startsWith( QByteArrayLiteral( "^D" ) ) );
 #endif
 
@@ -375,6 +394,35 @@ TEST_CASE( "IosLogProcessTransport strips script PTY header from received data" 
     QByteArray plainData = QByteArrayLiteral( "some data\n" );
     plainTransport.filterReceivedBytesForTest( plainData );
     REQUIRE( plainData == QByteArrayLiteral( "some data\n" ) );
+}
+
+TEST_CASE( "IosLogProcessTransport handles split PTY prefix across chunks" )
+{
+#ifdef Q_OS_MAC
+    // The ^D\b\b prefix (4 bytes) may arrive split across two reads.
+    // The transport must buffer the partial prefix and strip it once
+    // the rest arrives, without leaking bytes into the log.
+    TestIosLogProcessTransport transport(
+        QStringLiteral( "/opt/homebrew/bin/pymobiledevice3" ),
+        QStringLiteral( "00008030-001C195E36D8802E" ), QString{}, true );
+
+    // First chunk: only "^D" (2 of 4 bytes of the prefix)
+    QByteArray chunk1 = QByteArrayLiteral( "^D" );
+    transport.filterReceivedBytesForTest( chunk1 );
+    REQUIRE( chunk1.isEmpty() ); // buffered, not emitted
+
+    // Second chunk: remaining "\b\b" + real data
+    QByteArray chunk2 = QByteArray( 2, '\b' ) + QByteArrayLiteral( "Default 12:34:56 Msg\n" );
+    transport.filterReceivedBytesForTest( chunk2 );
+    REQUIRE( chunk2 == QByteArrayLiteral( "Default 12:34:56 Msg\n" ) );
+
+    // Subsequent chunks pass through unchanged.
+    QByteArray chunk3 = QByteArrayLiteral( "Next line\n" );
+    transport.filterReceivedBytesForTest( chunk3 );
+    REQUIRE( chunk3 == QByteArrayLiteral( "Next line\n" ) );
+#else
+    SUCCEED( "Split-prefix test is macOS-only." );
+#endif
 }
 
 TEST_CASE( "IosLogProcessTransport PTY wrapper forces ANSI output from script-emulating process" )
@@ -587,11 +635,7 @@ TEST_CASE( "AdbProcessTransport listDevices returns an error when adb cannot sta
 
 TEST_CASE( "AdbProcessTransport surfaces immediate post-start failures as transport errors" )
 {
-#ifdef Q_OS_WIN
-    TestAdbProcessTransport transport( QStringLiteral( "whoami.exe" ), QStringLiteral( "serial-123" ), {} );
-#else
-    TestAdbProcessTransport transport( QStringLiteral( "false" ), QStringLiteral( "serial-123" ), {} );
-#endif
+    ImmediateFailureAdbProcessTransport transport;
     SafeQSignalSpy errorSpy( &transport, SIGNAL( errorOccurred( QString ) ) );
     SafeQSignalSpy stateSpy( &transport, SIGNAL( stateChanged( LiveSourceTransport::State ) ) );
 

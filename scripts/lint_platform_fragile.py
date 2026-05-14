@@ -71,6 +71,16 @@ PATTERNS: list[dict] = [
             "or compare QFileInfo(path).fileName() instead."
         ),
     },
+    {
+        "name": "whoami fake process-failure test",
+        "regex": re.compile(r'QStringLiteral\s*\(\s*"whoami\.exe"\s*\)'),
+        "fix": (
+            "Do not use whoami.exe to simulate a failed Windows process. It can "
+            "outlive short startup grace windows on slower CI runners and make "
+            "connectTransport() report success. Create a temporary script that "
+            "exits with a non-zero status instead."
+        ),
+    },
 ]
 
 # Multi-line patterns: checked separately via whole-file analysis.
@@ -158,6 +168,37 @@ def _check_unguarded_platform_helper(text: str, path: Path) -> list[tuple[int, s
     return findings
 
 
+def _check_main_view_text_pixel_probe(text: str, path: Path) -> list[tuple[int, str]]:
+    """Flag main-view text pixel probes that assert on viewport grabs.
+
+    PR #17 exposed this on Windows x86 / Qt5: even when the test waited and
+    repeatedly grabbed the offscreen viewport, that runner could still return a
+    blank frame. Keep this check narrow to main-view text pixel counters; use
+    deterministic cache/layout assertions instead.
+    """
+    if path.name != "crawlerwidget_test.cpp" or ALLOW_MARKER in text:
+        return []
+
+    lines = text.splitlines()
+    findings: list[tuple[int, str]] = []
+    for i, line in enumerate(lines, start=1):
+        if "grabMainViewport(" not in line or "=" not in line:
+            continue
+
+        context_after = "\n".join(lines[i - 1 : min(len(lines), i + 25)])
+        if "textPixelsInLeftBand" in context_after and "textPixelsInRightBand" in context_after:
+            findings.append(
+                (
+                    i,
+                    "Main-view text pixel probes based on viewport grabs are flaky "
+                    "on Windows Qt5 offscreen runners. Assert deterministic cache "
+                    "or layout state instead of sampled text pixels.",
+                )
+            )
+
+    return findings
+
+
 _GUARD_RE = re.compile(r"^\s*#\s*if(?:def|n?def)?\s+(Q_OS_\w+)")
 _ELSE_RE = re.compile(r"^\s*#\s*else")
 _ENDIF_RE = re.compile(r"^\s*#\s*endif")
@@ -198,6 +239,10 @@ MULTI_LINE_CHECKS: list[dict] = [
     {
         "name": "unguarded-platform-helper",
         "check": _check_unguarded_platform_helper,
+    },
+    {
+        "name": "main-view-text-pixel-probe",
+        "check": _check_main_view_text_pixel_probe,
     },
 ]
 
@@ -252,7 +297,7 @@ def lint_file(path: Path) -> int:
             print(f"  at {path}:{line_num}")
             print(f"  {message}")
             print()
-            issues += len(findings)
+            issues += 1
 
     return issues
 
