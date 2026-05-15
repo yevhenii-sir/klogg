@@ -845,8 +845,18 @@ void AbstractLogView::registerShortcut( const std::string& action, std::function
     const auto& config = Configuration::get();
     const auto& configuredShortcuts = config.shortcuts();
 
-    ShortcutAction::registerShortcut( configuredShortcuts, shortcuts_, this, Qt::WidgetShortcut,
-                                      action, func );
+    ShortcutAction::registerShortcut( configuredShortcuts, shortcuts_, this,
+                                      Qt::WidgetWithChildrenShortcut, action,
+                                      [ this, func = std::move( func ) ] {
+                                          const auto* focusWidget = QApplication::focusWidget();
+                                          if ( focusWidget == nullptr
+                                               || ( focusWidget != this && focusWidget != viewport()
+                                                    && !isAncestorOf( focusWidget ) ) ) {
+                                              return;
+                                          }
+
+                                          func();
+                                      } );
 }
 
 void AbstractLogView::registerShortcuts()
@@ -1234,15 +1244,18 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
         const int heightForPullToFollow = ( useTextWrap_ && textAreaCache_.actual_height_ > 0 )
             ? textAreaCache_.actual_height_
             : effectiveHeight;
+        const int maxPullToFollowTop
+            = std::max( 0, viewport()->height() - pullToFollowHeight );
         drawingPullToFollowTopPosition
-            = std::min( drawingTopPosition + heightForPullToFollow, viewport()->height() );
+            = std::min( drawingTopPosition + heightForPullToFollow, maxPullToFollowTop );
     }
     else {
         drawingTopOffset_ = -pullToFollowHeight;
         drawingTopPosition = drawingTopOffset_;
-        // Update pull-to-follow position using effective height
+        const int maxPullToFollowTop
+            = std::max( 0, viewport()->height() - pullToFollowHeight );
         drawingPullToFollowTopPosition
-            = std::min( drawingTopPosition + effectiveHeight, viewport()->height() );
+            = std::min( drawingTopPosition + effectiveHeight, maxPullToFollowTop );
     }
 
     devicePainter.drawPixmap( 0, drawingTopPosition, textAreaCache_.pixmap_ );
