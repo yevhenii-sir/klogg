@@ -68,6 +68,7 @@ option(KLOGG_BUILD_BENCHMARKS "Build benchmark tools" ON)
 option(KLOGG_USE_LTO "Use link time optimization" ON)
 option(KLOGG_USE_SENTRY "Use Sentry" OFF)
 option(KLOGG_GENERIC_CPU "Build for generic CPU" OFF)
+option(KLOGG_PERF_MEASURE_STREAMING "Enable streaming pipeline performance meters (off by default, for local perf profiling)" OFF)
 option(KLOGG_OSX_DEPLOYMENT_TARGET "Override target MacOS version" "")
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 4)
@@ -158,7 +159,7 @@ if(MSVC)
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /D __SSE4_1__=1 /D __SSE4_2__=1")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /D __SSE4_1__=1 /D __SSE4_2__=1")
 
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /bigobj ")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /bigobj /utf-8")
 else()
   ucm_add_flags(CXX "-fno-sized-deallocation -fno-omit-frame-pointer")
 
@@ -194,6 +195,10 @@ set_project_warnings(project_warnings)
 include(CompilerFlags)
 add_library(project_options INTERFACE)
 set_project_compile_flags(project_options)
+
+if(KLOGG_PERF_MEASURE_STREAMING)
+  target_compile_definitions(project_options INTERFACE KLOGG_PERF_MEASURE_STREAMING)
+endif()
 
 # sanitizer options if supported by compiler
 include(Sanitizers)

@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
+#include <limits>
+#include <stdexcept>
 
 #include <QDir>
 #include <QFileInfo>
@@ -23,6 +26,17 @@ QString decodeUtf8Line( const QByteArray& utf8Line, QTextCodec* codec,
         line.remove( prefilterPattern );
     }
     return line;
+}
+
+void reserveSegmentMemory( QByteArray& data, qint64 targetBytes, qint64 budgetBytes )
+{
+    const auto reserveTarget = std::min( targetBytes, budgetBytes );
+    if ( reserveTarget <= 0 ) {
+        return;
+    }
+
+    const auto cappedTarget = std::min<qint64>( reserveTarget, std::numeric_limits<int>::max() );
+    data.reserve( type_safe::narrow_cast<int>( cappedTarget ) );
 }
 } // namespace
 
@@ -107,32 +121,109 @@ bool CaptureStore::loadFromDisk()
     return true;
 }
 
-void CaptureStore::appendUtf8( const QByteArray& data )
+CaptureStore::AppendResult CaptureStore::appendUtf8( const QByteArray& data )
 {
     const std::lock_guard<std::recursive_mutex> lock( mutex_ );
+    AppendResult appendResult;
+    appendResult.firstLine = LineNumber( static_cast<LineNumber::UnderlyingType>( totalLines_ ) );
     if ( data.isEmpty() ) {
-        return;
+        return appendResult;
+    }
+    appendResult.rawUtf8Lines.reserve( partialLine_.size() + data.size() );
+    appendResult.endOfLines.reserve( static_cast<size_t>( qMax<qsizetype>( 1, data.size() / 32 ) ) );
+
+    const auto originalLineCount = totalLines_;
+
+    const auto processBuffer = [ &appendResult ]( const QByteArray& buffer ) -> qsizetype {
+        qsizetype lineStart = 0;
+        const auto* const bufferData = buffer.constData();
+        const auto bufferSize = buffer.size();
+        klogg::vector<qint64> lineEnds;
+        lineEnds.reserve( static_cast<size_t>( qMax<qsizetype>( 1, bufferSize / 32 ) ) );
+        bool needsNormalization = false;
+
+        while ( lineStart < bufferSize ) {
+            const auto remaining = bufferSize - lineStart;
+            const auto* newline = static_cast<const char*>(
+                std::memchr( bufferData + lineStart, '\n', static_cast<size_t>( remaining ) ) );
+            if ( newline == nullptr ) {
+                break;
+            }
+
+            auto lineLength = static_cast<qsizetype>( newline - ( bufferData + lineStart ) );
+            if ( lineLength > 0 && bufferData[ lineStart + lineLength - 1 ] == '\r' ) {
+                needsNormalization = true;
+            }
+            lineEnds.push_back( static_cast<qint64>( newline - bufferData ) + 1 );
+            lineStart = static_cast<qsizetype>( newline - bufferData ) + 1;
+        }
+
+        if ( lineEnds.empty() ) {
+            return lineStart;
+        }
+
+        if ( !needsNormalization ) {
+            const auto outputStart = appendResult.rawUtf8Lines.size();
+            appendResult.rawUtf8Lines.append( bufferData, type_safe::narrow_cast<int>( lineStart ) );
+            for ( const auto lineEnd : lineEnds ) {
+                appendResult.endOfLines.push_back( outputStart + lineEnd );
+            }
+            return lineStart;
+        }
+
+        qsizetype normalizedLineStart = 0;
+        for ( const auto lineEnd : lineEnds ) {
+            auto lineLength = static_cast<qsizetype>( lineEnd ) - normalizedLineStart - 1;
+            if ( lineLength > 0 && bufferData[ normalizedLineStart + lineLength - 1 ] == '\r' ) {
+                --lineLength;
+            }
+
+            appendResult.rawUtf8Lines.append( bufferData + normalizedLineStart,
+                                               type_safe::narrow_cast<int>( lineLength ) );
+            appendResult.rawUtf8Lines.append( '\n' );
+            appendResult.endOfLines.push_back( appendResult.rawUtf8Lines.size() );
+            normalizedLineStart = static_cast<qsizetype>( lineEnd );
+        }
+
+        return lineStart;
+    };
+
+    if ( partialLine_.isEmpty() ) {
+        const auto consumed = processBuffer( data );
+        if ( consumed < data.size() ) {
+            partialLine_ = data.mid( type_safe::narrow_cast<int>( consumed ) );
+        }
+        appendResult.lineCount
+            = LinesCount( static_cast<LinesCount::UnderlyingType>( appendResult.endOfLines.size() ) );
+        commitLines( appendResult );
+        if ( totalLines_ != originalLineCount ) {
+            lastModified_ = QDateTime::currentDateTime();
+        }
+        return appendResult;
     }
 
     partialLine_.append( data );
-
-    auto newlineIndex = partialLine_.indexOf( '\n' );
-    while ( newlineIndex >= 0 ) {
-        auto lineBytes = partialLine_.left( newlineIndex );
-        partialLine_.remove( 0, newlineIndex + 1 );
-
-        if ( lineBytes.endsWith( '\r' ) ) {
-            lineBytes.chop( 1 );
-        }
-
-        commitLine( lineBytes, true );
-        newlineIndex = partialLine_.indexOf( '\n' );
+    const auto consumed = processBuffer( partialLine_ );
+    if ( consumed == partialLine_.size() ) {
+        partialLine_.clear();
     }
+    else if ( consumed > 0 ) {
+        partialLine_ = partialLine_.mid( type_safe::narrow_cast<int>( consumed ) );
+    }
+    appendResult.lineCount
+        = LinesCount( static_cast<LinesCount::UnderlyingType>( appendResult.endOfLines.size() ) );
+    commitLines( appendResult );
+    if ( totalLines_ != originalLineCount ) {
+        lastModified_ = QDateTime::currentDateTime();
+    }
+    return appendResult;
 }
 
-void CaptureStore::finishInput()
+CaptureStore::AppendResult CaptureStore::finishInput()
 {
     const std::lock_guard<std::recursive_mutex> lock( mutex_ );
+    AppendResult appendResult;
+    appendResult.firstLine = LineNumber( static_cast<LineNumber::UnderlyingType>( totalLines_ ) );
     if ( !partialLine_.isEmpty() ) {
         auto lineBytes = partialLine_;
         partialLine_.clear();
@@ -141,6 +232,11 @@ void CaptureStore::finishInput()
         }
 
         commitLine( lineBytes, false );
+        appendResult.rawUtf8Lines.append( lineBytes );
+        appendResult.rawUtf8Lines.append( '\n' );
+        appendResult.endOfLines.push_back( appendResult.rawUtf8Lines.size() );
+        appendResult.lineCount = 1_lcount;
+        lastModified_ = QDateTime::currentDateTime();
     }
 
     // Flush any pending output data
@@ -148,6 +244,7 @@ void CaptureStore::finishInput()
         boundOutputHandle_->flush();
         resetOutputFlushCounters();
     }
+    return appendResult;
 }
 
 void CaptureStore::flush()
@@ -264,112 +361,200 @@ SearchableLogData::RawLines CaptureStore::buildRawLines( LineNumber first, Lines
                                                          QTextCodec* codec,
                                                          const QRegularExpression& prefilterPattern ) const
 {
-    // Snapshot-based two-phase read: take lightweight references under the lock,
-    // then build the output buffer without holding the mutex.  This prevents the
-    // search worker thread from blocking appendUtf8() on the main thread.
+    // Segment-based batch read: identify contiguous byte ranges per segment
+    // under the lock, then bulk-copy directly into the output buffer.
+    // This avoids per-line QByteArray allocations that dominate the old path.
 
-    struct LineRef {
+    struct SegmentRead {
         std::shared_ptr<QByteArray> memoryData;
         QString filePath;
-        qint64 offset;
-        int length;
+        qint64 byteStart;
+        qint64 byteLength;
+        qint64 lineCount;
     };
 
-    LinesCount::UnderlyingType requestedLines = 0;
-    std::vector<LineRef> lineRefs;
+    LinesCount::UnderlyingType totalRequestedLines = 0;
+    std::vector<SegmentRead> segmentReads;
 
     {
         const std::lock_guard<std::recursive_mutex> lock( mutex_ );
         const auto totalLines = lineCount();
         const auto availableLines = qMax<LineNumber::UnderlyingType>(
             0, totalLines.get() - qMin( first.get(), totalLines.get() ) );
-        requestedLines
+        totalRequestedLines
             = qMin( number.get(), static_cast<LinesCount::UnderlyingType>( availableLines ) );
-        lineRefs.reserve( requestedLines );
 
-        // Cache the current segment to avoid repeated binary searches.
-        // Consecutive lines almost always fall within the same segment.
-        auto cachedSegIt = segments_.cend();
-        qint64 cachedPrevEnd = 0;
+        if ( totalRequestedLines == 0 ) {
+            SearchableLogData::RawLines rawLines;
+            rawLines.startLine = first;
+            return rawLines;
+        }
 
-        for ( LinesCount::UnderlyingType lineOffset = 0; lineOffset < requestedLines;
-              ++lineOffset ) {
-            const auto lineNum = first + LinesCount( lineOffset );
-            if ( lineNum < 0_lnum || lineNum >= totalLines ) {
+        segmentReads.reserve( 4 );
+
+        auto segIt = std::lower_bound(
+            segments_.cbegin(), segments_.cend(), first.get(),
+            []( const Segment& segment, qint64 value ) {
+                return segment.cumulativeEndLine <= value;
+            } );
+
+        if ( segIt == segments_.cend() ) {
+            SearchableLogData::RawLines rawLines;
+            rawLines.startLine = first;
+            return rawLines;
+        }
+
+        LinesCount::UnderlyingType linesRemaining = totalRequestedLines;
+        auto currentLine = first;
+
+        while ( linesRemaining > 0 && segIt != segments_.cend() ) {
+            const auto segIdx
+                = static_cast<size_t>( std::distance( segments_.cbegin(), segIt ) );
+            const qint64 prevEndLine
+                = segIdx == 0 ? 0LL : segments_[ segIdx - 1 ].cumulativeEndLine;
+
+            const auto localStart = static_cast<int>( currentLine.get<qint64>() - prevEndLine );
+            const auto linesInThisSegment
+                = qMin( linesRemaining,
+                        static_cast<LinesCount::UnderlyingType>(
+                            klogg::ssize( segIt->lineOffsets ) - localStart ) );
+
+            if ( linesInThisSegment <= 0 || localStart < 0
+                 || localStart >= klogg::ssize( segIt->lineOffsets ) ) {
                 break;
             }
 
-            // Advance the cached segment iterator if the line is beyond it.
-            if ( cachedSegIt == segments_.cend()
-                 || lineNum.get<qint64>() >= cachedSegIt->cumulativeEndLine ) {
-                cachedSegIt = std::lower_bound(
-                    segments_.cbegin(), segments_.cend(), lineNum.get(),
-                    []( const Segment& segment, qint64 value ) {
-                        return segment.cumulativeEndLine <= value;
-                    } );
-                if ( cachedSegIt == segments_.cend() ) {
-                    break;
-                }
-                const auto segIdx
-                    = static_cast<size_t>( std::distance( segments_.cbegin(), cachedSegIt ) );
-                cachedPrevEnd = segIdx == 0 ? 0LL : segments_[ segIdx - 1 ].cumulativeEndLine;
+            SegmentRead read;
+            read.memoryData = segIt->memoryData;
+            read.filePath = segIt->filePath;
+            read.lineCount = static_cast<qint64>( linesInThisSegment );
+
+            read.byteStart = segIt->lineOffsets[ static_cast<size_t>( localStart ) ];
+            const auto lastLocalLine = localStart + static_cast<int>( linesInThisSegment ) - 1;
+
+            if ( lastLocalLine + 1 < klogg::ssize( segIt->lineOffsets ) ) {
+                read.byteLength = segIt->lineOffsets[ static_cast<size_t>( lastLocalLine + 1 ) ]
+                                - read.byteStart;
+            } else {
+                read.byteLength = segIt->byteSize - read.byteStart;
             }
 
-            const auto localLine
-                = static_cast<int>( lineNum.get<qint64>() - cachedPrevEnd );
+            segmentReads.push_back( std::move( read ) );
 
-            if ( localLine < 0 || localLine >= klogg::isize( cachedSegIt->lineOffsets ) ) {
-                break;
-            }
-
-            LineRef ref;
-            ref.memoryData = cachedSegIt->memoryData; // shared_ptr copy keeps data alive
-            ref.filePath = cachedSegIt->filePath;
-            ref.offset = cachedSegIt->lineOffsets[ static_cast<size_t>( localLine ) ];
-            ref.length = cachedSegIt->lineLengths[ static_cast<size_t>( localLine ) ];
-            lineRefs.push_back( std::move( ref ) );
+            linesRemaining -= linesInThisSegment;
+            currentLine = currentLine + LinesCount( linesInThisSegment );
+            ++segIt;
         }
     }
-    // mutex released -- main thread can now append data freely
+    // mutex released
 
     const auto effectiveCodec = codec ? codec : QTextCodec::codecForName( "UTF-8" );
+    const auto sourceEncodingParams = EncodingParameters( effectiveCodec );
+    const auto canUseRawUtf8
+        = sourceEncodingParams.isUtf8Compatible && prefilterPattern.pattern().isEmpty();
 
     SearchableLogData::RawLines rawLines;
     rawLines.startLine = first;
-    rawLines.textDecoder.decoder.reset( effectiveCodec->makeDecoder() );
-    rawLines.textDecoder.encodingParams = EncodingParameters( effectiveCodec );
+    auto* utf8Codec = QTextCodec::codecForName( "UTF-8" );
+    rawLines.textDecoder.decoder.reset( utf8Codec->makeDecoder() );
+    rawLines.textDecoder.encodingParams = sourceEncodingParams;
     rawLines.textDecoder.encodingParams.isUtf8Compatible = true;
     rawLines.textDecoder.encodingParams.lineFeedWidth = 1;
     rawLines.prefilterPattern = prefilterPattern;
 
-    // Cache file handle for spilled segments to avoid repeated open/close
-    // when consecutive lines come from the same segment file.
-    QString cachedFilePath;
-    std::unique_ptr<QFile> cachedFile;
+    if ( canUseRawUtf8 ) {
+        // Fast path: bulk copy from segments, derive endOfLines from \n scanning.
+        // Segment data stores each line as content+\n, so scanning for \n gives
+        // exact line boundaries without per-line allocation.
+        qint64 totalBytes = 0;
+        for ( const auto& read : segmentReads ) {
+            totalBytes += read.byteLength;
+        }
+        rawLines.buffer.reserve( static_cast<size_t>( totalBytes ) );
+        rawLines.endOfLines.reserve( static_cast<size_t>( totalRequestedLines ) );
 
-    for ( const auto& ref : lineRefs ) {
-        QByteArray utf8Line;
-        if ( ref.memoryData ) {
-            utf8Line = ref.memoryData->mid( type_safe::narrow_cast<int>( ref.offset ), ref.length );
-        }
-        else {
-            if ( cachedFilePath != ref.filePath || !cachedFile ) {
-                cachedFile = std::make_unique<QFile>( ref.filePath );
-                if ( !cachedFile->open( QIODevice::ReadOnly ) ) {
-                    cachedFile.reset();
+        for ( const auto& read : segmentReads ) {
+            const auto outputStart = klogg::ssize( rawLines.buffer );
+
+            if ( read.memoryData ) {
+                const auto* src = read.memoryData->constData() + read.byteStart;
+                rawLines.buffer.insert( rawLines.buffer.end(), src, src + read.byteLength );
+            } else {
+                QFile file( read.filePath );
+                if ( file.open( QIODevice::ReadOnly ) ) {
+                    file.seek( read.byteStart );
+                    const auto data = file.read( read.byteLength );
+                    if ( data.size() > 0 ) {
+                        rawLines.buffer.insert( rawLines.buffer.end(), data.constBegin(),
+                                                data.constEnd() );
+                    }
                 }
-                cachedFilePath = ref.filePath;
             }
-            if ( cachedFile && cachedFile->isOpen() ) {
-                cachedFile->seek( ref.offset );
-                utf8Line = cachedFile->read( ref.length );
+
+            // Scan for \n to compute endOfLines
+            const auto* scanStart = rawLines.buffer.data() + outputStart;
+            const auto scanLength = klogg::ssize( rawLines.buffer ) - outputStart;
+            qint64 linesFound = 0;
+            for ( qint64 pos = 0; pos < scanLength && linesFound < read.lineCount; ++pos ) {
+                if ( scanStart[ pos ] == '\n' ) {
+                    rawLines.endOfLines.push_back( outputStart + pos + 1 );
+                    ++linesFound;
+                }
+            }
+
+            // Handle unterminated last line
+            if ( linesFound < read.lineCount ) {
+                rawLines.buffer.push_back( '\n' );
+                rawLines.endOfLines.push_back( klogg::ssize( rawLines.buffer ) );
             }
         }
-        const auto lineStr = decodeUtf8Line( utf8Line, effectiveCodec, prefilterPattern );
-        const auto lineUtf8 = lineStr.toUtf8();
-        rawLines.buffer.insert( rawLines.buffer.end(), lineUtf8.begin(), lineUtf8.end() );
-        rawLines.buffer.push_back( '\n' );
-        rawLines.endOfLines.push_back( klogg::ssize( rawLines.buffer ) );
+    } else {
+        // Slow path: bulk read per segment, per-line codec conversion or prefilter
+        for ( const auto& read : segmentReads ) {
+            QByteArray segmentData;
+            if ( read.memoryData ) {
+                segmentData = read.memoryData->mid( type_safe::narrow_cast<int>( read.byteStart ),
+                                                    type_safe::narrow_cast<int>( read.byteLength ) );
+            } else {
+                QFile file( read.filePath );
+                if ( file.open( QIODevice::ReadOnly ) ) {
+                    file.seek( read.byteStart );
+                    segmentData = file.read( read.byteLength );
+                }
+            }
+
+            qint64 lineStart = 0;
+            for ( qint64 lineIdx = 0; lineIdx < read.lineCount; ++lineIdx ) {
+                const auto remaining = segmentData.size() - static_cast<int>( lineStart );
+                if ( remaining <= 0 ) {
+                    break;
+                }
+                const auto* nl = static_cast<const char*>(
+                    std::memchr( segmentData.constData() + static_cast<int>( lineStart ), '\n',
+                                 static_cast<size_t>( remaining ) ) );
+                qint64 lineEnd;
+                if ( nl ) {
+                    lineEnd = nl - segmentData.constData();
+                } else {
+                    lineEnd = segmentData.size();
+                }
+
+                auto lineLength = lineEnd - lineStart;
+                if ( lineLength > 0 && segmentData[ static_cast<int>( lineStart + lineLength - 1 ) ] == '\r' ) {
+                    --lineLength;
+                }
+
+                const auto utf8Line = segmentData.mid( static_cast<int>( lineStart ),
+                                                       static_cast<int>( lineLength ) );
+                const auto lineStr = decodeUtf8Line( utf8Line, effectiveCodec, prefilterPattern );
+                const auto lineUtf8 = lineStr.toUtf8();
+                rawLines.buffer.insert( rawLines.buffer.end(), lineUtf8.begin(), lineUtf8.end() );
+                rawLines.buffer.push_back( '\n' );
+                rawLines.endOfLines.push_back( klogg::ssize( rawLines.buffer ) );
+
+                lineStart = lineEnd + 1;
+            }
+        }
     }
 
     return rawLines;
@@ -450,6 +635,8 @@ void CaptureStore::commitLine( const QByteArray& lineBytes, bool terminated )
     auto& segment = ensureActiveSegment();
     if ( !segment.memoryData ) {
         segment.memoryData = std::make_shared<QByteArray>();
+        reserveSegmentMemory( *segment.memoryData, limits_.segmentTargetBytes,
+                              limits_.memoryBudgetBytes );
     }
 
     const auto offset = segment.memoryData->size();
@@ -462,17 +649,114 @@ void CaptureStore::commitLine( const QByteArray& lineBytes, bool terminated )
     segment.byteSize = segment.memoryData->size();
     segment.spilled = false;
 
-    appendOutputBytes( terminated ? lineBytes + '\n' : lineBytes );
+    if ( boundOutputHandle_ ) {
+        appendOutputBytes( terminated ? lineBytes + '\n' : lineBytes );
+    }
 
     fileSize_ += lineBytes.size() + ( terminated ? 1 : 0 );
     memoryBytes_ += lineBytes.size() + ( terminated ? 1 : 0 );
     totalLines_ += 1;
     maxLineLength_ = qMax( maxLineLength_, static_cast<int>( lineBytes.size() ) );
-    lastModified_ = QDateTime::currentDateTime();
 
-    rebuildCumulativeLineCounts( true );
+    segment.cumulativeEndLine += 1;
     rotateSegmentIfNeeded();
-    enforceMemoryBudget();
+    if ( memoryBytes_ > limits_.memoryBudgetBytes ) {
+        enforceMemoryBudget();
+    }
+}
+
+void CaptureStore::commitLines( const AppendResult& appendResult )
+{
+    if ( appendResult.endOfLines.empty() ) {
+        return;
+    }
+
+    if ( boundOutputHandle_ ) {
+        if ( appendResult.endOfLines.size()
+             > static_cast<size_t>( std::numeric_limits<int>::max() ) ) {
+            throw std::runtime_error( "Too many output lines while committing capture batch" );
+        }
+        appendOutputBytes( appendResult.rawUtf8Lines,
+                           static_cast<int>( appendResult.endOfLines.size() ) );
+    }
+
+    size_t lineIndex = 0;
+    qint64 rawLineStart = 0;
+    const auto lineCount = appendResult.endOfLines.size();
+
+    while ( lineIndex < lineCount ) {
+        auto& segment = ensureActiveSegment();
+        if ( !segment.memoryData ) {
+            segment.memoryData = std::make_shared<QByteArray>();
+            reserveSegmentMemory( *segment.memoryData, limits_.segmentTargetBytes,
+                                  limits_.memoryBudgetBytes );
+        }
+
+        const auto segmentRawStart = rawLineStart;
+        const auto firstLineInSegment = lineIndex;
+        auto segmentBytes = qint64{ 0 };
+        auto segmentMaxLineLength = 0;
+
+        while ( lineIndex < lineCount ) {
+            const auto lineEnd = appendResult.endOfLines[ lineIndex ];
+            const auto lineBytes = lineEnd - rawLineStart;
+            if ( lineIndex > firstLineInSegment
+                 && segment.byteSize + segmentBytes + lineBytes > limits_.segmentTargetBytes ) {
+                break;
+            }
+
+            if ( lineBytes <= 0 || lineBytes - 1 > std::numeric_limits<int>::max() ) {
+                throw std::runtime_error( "Invalid append line length while committing capture batch" );
+            }
+            segmentMaxLineLength = qMax( segmentMaxLineLength,
+                                         type_safe::narrow_cast<int>( lineBytes - 1 ) );
+            segmentBytes += lineBytes;
+            rawLineStart = lineEnd;
+            ++lineIndex;
+
+            if ( segment.byteSize + segmentBytes >= limits_.segmentTargetBytes ) {
+                break;
+            }
+        }
+
+        const auto segmentOffset = segment.memoryData->size();
+        if ( segmentBytes < 0 || segmentBytes > std::numeric_limits<int>::max() ) {
+            throw std::runtime_error( "Invalid segment byte count while committing capture batch" );
+        }
+        segment.memoryData->append( appendResult.rawUtf8Lines.constData() + segmentRawStart,
+                                    type_safe::narrow_cast<int>( segmentBytes ) );
+
+        qint64 localRawStart = segmentRawStart;
+        qint64 localOffset = segmentOffset;
+        for ( auto metadataIndex = firstLineInSegment; metadataIndex < lineIndex;
+              ++metadataIndex ) {
+            const auto lineEnd = appendResult.endOfLines[ metadataIndex ];
+            const auto lineBytes = lineEnd - localRawStart;
+            if ( lineBytes <= 0 || lineBytes - 1 > std::numeric_limits<int>::max() ) {
+                throw std::runtime_error( "Invalid metadata line length while committing capture batch" );
+            }
+            segment.lineOffsets.push_back( localOffset );
+            segment.lineLengths.push_back( type_safe::narrow_cast<int>( lineBytes - 1 ) );
+            localOffset += lineBytes;
+            localRawStart = lineEnd;
+        }
+
+        const auto committedLines
+            = static_cast<qint64>( lineIndex - firstLineInSegment );
+        segment.byteSize = segment.memoryData->size();
+        segment.spilled = false;
+        segment.cumulativeEndLine += committedLines;
+
+        fileSize_ += segmentBytes;
+        memoryBytes_ += segmentBytes;
+        totalLines_ += committedLines;
+        maxLineLength_ = qMax( maxLineLength_, segmentMaxLineLength );
+
+        rotateSegmentIfNeeded();
+        if ( memoryBytes_ > limits_.memoryBudgetBytes ) {
+            enforceMemoryBudget();
+        }
+    }
 }
 
 void CaptureStore::ensureCaptureDir()
@@ -490,6 +774,8 @@ CaptureStore::Segment& CaptureStore::ensureActiveSegment()
         segment.id = nextSegmentId_++;
         segment.filePath = QDir( capturePath_ ).filePath( makeSegmentFileName( segment.id ) );
         segment.memoryData = std::make_shared<QByteArray>();
+        reserveSegmentMemory( *segment.memoryData, limits_.segmentTargetBytes,
+                              limits_.memoryBudgetBytes );
         segment.cumulativeEndLine = prevCumulative;
         segments_.push_back( std::move( segment ) );
     }
@@ -512,6 +798,8 @@ void CaptureStore::rotateSegmentIfNeeded()
     segment.id = nextSegmentId_++;
     segment.filePath = QDir( capturePath_ ).filePath( makeSegmentFileName( segment.id ) );
     segment.memoryData = std::make_shared<QByteArray>();
+    reserveSegmentMemory( *segment.memoryData, limits_.segmentTargetBytes,
+                          limits_.memoryBudgetBytes );
     segment.cumulativeEndLine = prevCumulative;
     segments_.push_back( std::move( segment ) );
 }
@@ -686,7 +974,7 @@ bool CaptureStore::writeCaptureToDevice( QIODevice* device ) const
     return true;
 }
 
-void CaptureStore::appendOutputBytes( const QByteArray& bytes )
+void CaptureStore::appendOutputBytes( const QByteArray& bytes, int lineCount )
 {
     if ( !boundOutputHandle_ ) {
         return;
@@ -700,7 +988,7 @@ void CaptureStore::appendOutputBytes( const QByteArray& bytes )
     }
 
     unflushedOutputBytes_ += bytes.size();
-    unflushedOutputLines_++;
+    unflushedOutputLines_ += lineCount;
     flushOutputIfNeeded();
 }
 

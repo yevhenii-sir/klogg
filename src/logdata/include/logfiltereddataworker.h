@@ -56,6 +56,7 @@
 
 #include "atomicflag.h"
 #include "linetypes.h"
+#include "matchercache.h"
 #include "regularexpression.h"
 #include "synchronization.h"
 
@@ -96,6 +97,13 @@ struct SearchResults {
     LinesCount processedLines;
 };
 
+struct SearchPerformanceCounters {
+    quint64 operationStarts = 0;
+    quint64 matcherCreations = 0;
+    quint64 updateRequests = 0;
+    quint64 coalescedLiveUpdates = 0;
+};
+
 // This class is a mutex protected set of search result data.
 // It is thread safe.
 class SearchData {
@@ -129,6 +137,7 @@ private:
     LineLength maxLength_{ 0 };
     LinesCount nbLinesProcessed_{ 0 };
     LinesCount nbMatches_{ 0 };
+    bool lastProcessedLineMatched_ = false;
 };
 
 class SearchOperation : public QObject {
@@ -137,7 +146,10 @@ public:
     SearchOperation( const SearchableLogData& sourceLogData, AtomicFlag& interruptRequested,
                      const RegularExpressionPattern& regExp, LineNumber startLine,
                      LineNumber endLine,
-                     std::shared_ptr<RegularExpression> compiledRegExp = nullptr );
+                     std::shared_ptr<RegularExpression> compiledRegExp = nullptr,
+                     std::atomic<LineNumber::UnderlyingType>* liveTargetEndLine = nullptr,
+                     std::atomic<quint64>* matcherCreations = nullptr,
+                     MatcherCache* matcherCache = nullptr );
 
     // Run the search operation, returns true if it has been done
     // and false if it has been cancelled (results not copied)
@@ -160,6 +172,9 @@ protected:
     LineNumber startLine_;
     LineNumber endLine_;
     std::shared_ptr<RegularExpression> compiledRegExp_;
+    std::atomic<LineNumber::UnderlyingType>* liveTargetEndLine_;
+    std::atomic<quint64>* matcherCreations_;
+    MatcherCache* matcherCache_;
 };
 
 class FullSearchOperation : public SearchOperation {
@@ -168,9 +183,11 @@ public:
     FullSearchOperation( const SearchableLogData& sourceLogData, AtomicFlag& interruptRequested,
                          const RegularExpressionPattern& regExp, LineNumber startLine,
                          LineNumber endLine,
-                         std::shared_ptr<RegularExpression> compiledRegExp = nullptr )
+                         std::shared_ptr<RegularExpression> compiledRegExp = nullptr,
+                         std::atomic<quint64>* matcherCreations = nullptr,
+                         MatcherCache* matcherCache = nullptr )
         : SearchOperation( sourceLogData, interruptRequested, regExp, startLine, endLine,
-                           std::move( compiledRegExp ) )
+                           std::move( compiledRegExp ), nullptr, matcherCreations, matcherCache )
     {
     }
 
@@ -183,9 +200,12 @@ public:
     UpdateSearchOperation( const SearchableLogData& sourceLogData, AtomicFlag& interruptRequested,
                            const RegularExpressionPattern& regExp, LineNumber startLine,
                            LineNumber endLine, LineNumber position,
-                           std::shared_ptr<RegularExpression> compiledRegExp = nullptr )
+                           std::shared_ptr<RegularExpression> compiledRegExp = nullptr,
+                           std::atomic<LineNumber::UnderlyingType>* liveTargetEndLine = nullptr,
+                           std::atomic<quint64>* matcherCreations = nullptr,
+                           MatcherCache* matcherCache = nullptr )
         : SearchOperation( sourceLogData, interruptRequested, regExp, startLine, endLine,
-                           std::move( compiledRegExp ) )
+                           std::move( compiledRegExp ), liveTargetEndLine, matcherCreations, matcherCache )
         , initialPosition_( position )
     {
     }
@@ -251,6 +271,13 @@ public:
     // the search was replaced.
     OperationGeneration currentGeneration() const { return operationGeneration_.load(); }
 
+    SearchPerformanceCounters performanceCounters() const
+    {
+        return SearchPerformanceCounters{ operationStarts_.load(), matcherCreations_.load(),
+                                          updateRequests_.load(),
+                                          coalescedLiveUpdates_.load() };
+    }
+
     // Advance the generation counter without launching a worker thread.
     // Used by LogFilteredData when a cached result is delivered without
     // touching the worker -- without this bump, queued progress signals
@@ -291,7 +318,7 @@ private:
     // previous search thread, and starts the new one — so the caller (UI
     // thread) never blocks on the mutex.
     struct SearchRequest {
-        enum class Type { Full, Update } type;
+        enum class Type { Full, Update, LiveUpdate } type;
         RegularExpressionPattern regExp;
         LineNumber startLine;
         LineNumber endLine;
@@ -302,8 +329,9 @@ private:
     };
 
     void dispatchLoop();
-    void enqueueRequest( SearchRequest request );
+    void enqueueRequest( SearchRequest request, bool interruptRunningSearch = true );
     void joinOperationThread();
+    void finishLiveUpdateAndRestartIfNeeded( const SearchRequest& request );
 
     std::thread dispatchThread_;
     std::mutex requestMutex_;
@@ -325,6 +353,15 @@ private:
 
     std::atomic<OperationGeneration> operationGeneration_{ 0 };
     std::atomic<OperationId> operationId_{ 0 };
+    std::atomic<bool> liveUpdateRunning_{ false };
+    std::atomic<LineNumber::UnderlyingType> liveTargetEndLine_{ 0 };
+
+    std::atomic<quint64> operationStarts_{ 0 };
+    std::atomic<quint64> matcherCreations_{ 0 };
+    std::atomic<quint64> updateRequests_{ 0 };
+    std::atomic<quint64> coalescedLiveUpdates_{ 0 };
+
+    MatcherCache matcherCache_;
 
     // Cached compiled regular expression to avoid recompilation on incremental
     // search updates.  The Vectorscan database compilation is expensive; caching

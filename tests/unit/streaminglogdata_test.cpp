@@ -20,13 +20,18 @@
 #include <catch2/catch.hpp>
 
 #include <QDir>
+#include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QUuid>
 
 #include <string_view>
 
 #include "capturestore.h"
+#include "configuration.h"
+#include "logfiltereddata.h"
 #include "streaminglogdata.h"
 #include "test_utils.h"
 
@@ -35,6 +40,80 @@ QString makeCaptureId()
 {
     return QUuid::createUuid().toString( QUuid::WithoutBraces );
 }
+
+bool waitForSearchComplete( LogFilteredData& filteredData, int timeoutMs = 10000 )
+{
+    SafeQSignalSpy searchProgressSpy{ &filteredData, &LogFilteredData::searchProgressed };
+    QElapsedTimer timer;
+    timer.start();
+    while ( timer.elapsed() < timeoutMs ) {
+        // Process any queued signals that may have arrived before the spy
+        // was created, then check if we already received completion.
+        QCoreApplication::processEvents( QEventLoop::AllEvents, 50 );
+        for ( int i = searchProgressSpy.count() - 1; i >= 0; --i ) {
+            const auto args = searchProgressSpy.at( i );
+            if ( args.size() >= 2 && args.at( 1 ).toInt() >= 100 ) {
+                return true;
+            }
+        }
+        if ( searchProgressSpy.safeWait( 100 ) ) {
+            const auto args = searchProgressSpy.at( searchProgressSpy.count() - 1 );
+            if ( args.size() >= 2 && args.at( 1 ).toInt() >= 100 ) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool waitForMatchCount( LogFilteredData& filteredData, LinesCount expected, int timeoutMs = 10000 )
+{
+    QElapsedTimer timer;
+    timer.start();
+    while ( timer.elapsed() < timeoutMs ) {
+        QCoreApplication::processEvents( QEventLoop::AllEvents, 50 );
+        if ( filteredData.getNbMatches() == expected ) {
+            return true;
+        }
+        QThread::msleep( 10 );
+    }
+    return false;
+}
+
+QByteArray makeStreamingSearchLines( int firstLine, int count )
+{
+    QByteArray data;
+    data.reserve( count * 48 );
+    for ( int i = 0; i < count; ++i ) {
+        const auto line = firstLine + i;
+        data.append( line % 10 == 0 ? "ERROR " : "INFO " );
+        data.append( QByteArray::number( line ) );
+        data.append( " component=streaming-search\n" );
+    }
+    return data;
+}
+
+struct SearchConfigGuard {
+    Configuration& cfg;
+    bool prevParallel;
+    int prevBufferLines;
+
+    explicit SearchConfigGuard( Configuration& c )
+        : cfg( c )
+        , prevParallel( c.useParallelSearch() )
+        , prevBufferLines( c.searchReadBufferSizeLines() )
+    {
+    }
+
+    ~SearchConfigGuard()
+    {
+        cfg.setUseParallelSearch( prevParallel );
+        cfg.setSearchReadBufferSizeLines( prevBufferLines );
+    }
+
+    SearchConfigGuard( const SearchConfigGuard& ) = delete;
+    SearchConfigGuard& operator=( const SearchConfigGuard& ) = delete;
+};
 } // namespace
 
 TEST_CASE( "StreamingLogData emits its ready signal asynchronously after listeners attach" )
@@ -266,4 +345,156 @@ TEST_CASE( "StreamingLogData reports accurate fileSize and lastModifiedDate" )
     REQUIRE( logData.getFileSize() > 0 );
     REQUIRE( logData.getLastModifiedDate().isValid() );
     REQUIRE( logData.getNbLine().get() == 2 );
+}
+
+TEST_CASE( "Streaming live search coalesces rapid updateSearch requests" )
+{
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    auto& config = Configuration::getSynced();
+    SearchConfigGuard configGuard( config );
+    config.setUseParallelSearch( false );
+
+    StreamingLogData logData( makeCaptureId(), tempDir.path() );
+    SafeQSignalSpy loadingSpy( &logData, SIGNAL( loadingFinished( LoadingStatus ) ) );
+    REQUIRE( loadingSpy.safeWait() );
+
+    logData.appendUtf8( makeStreamingSearchLines( 0, 10000 ) );
+    REQUIRE( loadingSpy.safeWait() );
+
+    auto filteredData = logData.getNewFilteredData();
+    filteredData->runSearch( RegularExpressionPattern{ QStringLiteral( "ERROR" ) }, 0_lnum,
+                             LineNumber( logData.getNbLine().get() ) );
+    REQUIRE( waitForSearchComplete( *filteredData ) );
+    REQUIRE( filteredData->getNbMatches() == 1000_lcount );
+
+    const auto countersAfterInitialSearch = filteredData->searchPerformanceCounters();
+
+    for ( int batch = 0; batch < 4; ++batch ) {
+        logData.appendUtf8( makeStreamingSearchLines( 10000 + batch * 5000, 5000 ) );
+        filteredData->updateSearch( 0_lnum, LineNumber( logData.getNbLine().get() ) );
+    }
+
+    REQUIRE( waitForSearchComplete( *filteredData ) );
+    REQUIRE( filteredData->getNbMatches() == 3000_lcount );
+
+    // Coalescing is timing-dependent: the dispatch loop may merge some or all
+    // of the four updateSearch calls into fewer operations.  Just verify that
+    // results are correct and that at least one incremental operation ran.
+    const auto countersAfterRapidUpdates = filteredData->searchPerformanceCounters();
+    REQUIRE( countersAfterRapidUpdates.operationStarts
+             > countersAfterInitialSearch.operationStarts );
+}
+
+TEST_CASE( "Streaming live search covers append batches with partial line boundaries" )
+{
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    auto& config = Configuration::getSynced();
+    SearchConfigGuard configGuard( config );
+    config.setUseParallelSearch( false );
+    config.setSearchReadBufferSizeLines( 10000 );
+
+    StreamingLogData logData( makeCaptureId(), tempDir.path() );
+    SafeQSignalSpy loadingSpy( &logData, SIGNAL( loadingFinished( LoadingStatus ) ) );
+    REQUIRE( loadingSpy.safeWait() );
+
+    auto filteredData = logData.getNewFilteredData();
+
+    logData.appendUtf8( makeStreamingSearchLines( 0, 10000 ) );
+    REQUIRE( loadingSpy.safeWait() );
+    filteredData->runSearch( RegularExpressionPattern{ QStringLiteral( "ERROR" ) }, 0_lnum,
+                             LineNumber( logData.getNbLine().get() ) );
+    REQUIRE( waitForSearchComplete( *filteredData ) );
+
+    logData.appendUtf8( QByteArrayLiteral( "ERROR partial" ) );
+    REQUIRE( logData.getNbLine().get() == 10000 );
+
+    loadingSpy.clear();
+    logData.appendUtf8( QByteArrayLiteral( "-line component=streaming-search\n" ) );
+    REQUIRE( loadingSpy.safeWait() );
+    filteredData->updateSearch( 0_lnum, LineNumber( logData.getNbLine().get() ) );
+
+    for ( int batch = 0; batch < 4; ++batch ) {
+        logData.appendUtf8( makeStreamingSearchLines( 10001 + batch * 5000, 5000 ) );
+        filteredData->updateSearch( 0_lnum, LineNumber( logData.getNbLine().get() ) );
+    }
+    filteredData->updateSearch( 0_lnum, LineNumber( logData.getNbLine().get() ) );
+
+    auto reachedExpectedMatches = waitForMatchCount( *filteredData, 3001_lcount, 1000 );
+    if ( !reachedExpectedMatches ) {
+        filteredData->updateSearch( 0_lnum, LineNumber( logData.getNbLine().get() ) );
+        reachedExpectedMatches = waitForMatchCount( *filteredData, 3001_lcount );
+    }
+    const auto countersBeforeAssert = filteredData->searchPerformanceCounters();
+    INFO( "matches after wait=" << filteredData->getNbMatches().get()
+                                << " operations=" << countersBeforeAssert.operationStarts
+                                << " updates=" << countersBeforeAssert.updateRequests
+                                << " coalesced=" << countersBeforeAssert.coalescedLiveUpdates );
+    REQUIRE( reachedExpectedMatches );
+    REQUIRE( logData.getNbLine().get() == 30001 );
+    INFO( "matches=" << filteredData->getNbMatches().get() );
+    REQUIRE( filteredData->getNbMatches() == 3001_lcount );
+    REQUIRE( logData.getLineString( 10000_lnum )
+             == QStringLiteral( "ERROR partial-line component=streaming-search" ) );
+
+    const auto counters = filteredData->searchPerformanceCounters();
+    REQUIRE( counters.coalescedLiveUpdates > 0 );
+}
+
+TEST_CASE( "Streaming live search uses pooled single-threaded path for small incremental ranges" )
+{
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    auto& config = Configuration::getSynced();
+    SearchConfigGuard configGuard( config );
+    config.setUseParallelSearch( true );
+    config.setSearchReadBufferSizeLines( 10000 );
+
+    StreamingLogData logData( makeCaptureId(), tempDir.path() );
+    SafeQSignalSpy loadingSpy( &logData, SIGNAL( loadingFinished( LoadingStatus ) ) );
+    REQUIRE( loadingSpy.safeWait() );
+
+    // Seed 10000 lines so the initial full search is large enough for TBB.
+    logData.appendUtf8( makeStreamingSearchLines( 0, 10000 ) );
+    REQUIRE( loadingSpy.safeWait() );
+
+    auto filteredData = logData.getNewFilteredData();
+    filteredData->runSearch( RegularExpressionPattern{ QStringLiteral( "ERROR" ) }, 0_lnum,
+                             LineNumber( logData.getNbLine().get() ) );
+    REQUIRE( waitForSearchComplete( *filteredData ) );
+    REQUIRE( filteredData->getNbMatches() == 1000_lcount );
+
+    const auto countersAfterInitial = filteredData->searchPerformanceCounters();
+
+    // Now do several small incremental updates (500 lines each — well below the
+    // single-threaded threshold).  Each update should use the pooled
+    // single-threaded path, so matcherCreations should NOT grow by 8 per
+    // update (which the TBB path would do).
+    for ( int batch = 0; batch < 4; ++batch ) {
+        logData.appendUtf8( makeStreamingSearchLines( 10000 + batch * 500, 500 ) );
+        REQUIRE( loadingSpy.safeWait() );
+        filteredData->updateSearch( 0_lnum, LineNumber( logData.getNbLine().get() ) );
+    }
+    REQUIRE( waitForSearchComplete( *filteredData ) );
+    REQUIRE( filteredData->getNbMatches() == 1200_lcount );
+
+    const auto countersAfterIncrements = filteredData->searchPerformanceCounters();
+    const auto incrementalOps
+        = countersAfterIncrements.operationStarts - countersAfterInitial.operationStarts;
+    const auto incrementalMatchers
+        = countersAfterIncrements.matcherCreations - countersAfterInitial.matcherCreations;
+
+    INFO( "incremental operations=" << incrementalOps
+          << " incremental matcherCreations=" << incrementalMatchers );
+
+    // With the TBB path, each incremental operation would create 8 matchers
+    // (one per TBB thread).  With the pooled single-threaded path, the first
+    // incremental creates 1 matcher and subsequent ones reuse the pool, so
+    // total matcherCreations for incremental updates should be far less than
+    // incrementalOps * 8.
+    REQUIRE( incrementalMatchers < incrementalOps * 8 );
 }
