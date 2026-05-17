@@ -44,6 +44,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <chrono>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -287,6 +288,12 @@ public:
     OperationGeneration bumpGeneration()
     {
         operationId_.fetch_add( 1 );
+        liveUpdateRunning_.store( false );
+        {
+            std::lock_guard<std::mutex> lock( requestMutex_ );
+            pendingRequest_.reset();
+            deferredLiveRequest_.reset();
+        }
         return operationGeneration_.fetch_add( 1 ) + 1;
     }
 
@@ -330,13 +337,18 @@ private:
 
     void dispatchLoop();
     void enqueueRequest( SearchRequest request, bool interruptRunningSearch = true );
+    void enqueueOrDeferLiveRequest( SearchRequest request );
     void joinOperationThread();
     void finishLiveUpdateAndRestartIfNeeded( const SearchRequest& request );
+    LinesCount::UnderlyingType liveUpdateCoalesceThreshold() const;
+    void promoteDeferredLiveRequest();
 
     std::thread dispatchThread_;
     std::mutex requestMutex_;
     std::condition_variable requestCv_;
     std::optional<SearchRequest> pendingRequest_;
+    std::optional<SearchRequest> deferredLiveRequest_;
+    std::chrono::steady_clock::time_point deferredLiveDeadline_{};
     bool dispatchShutdown_ = false;
 
 private:
