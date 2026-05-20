@@ -20,6 +20,7 @@
 #include <catch2/catch.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <thread>
 #include <QDir>
 #include <QElapsedTimer>
@@ -139,6 +140,70 @@ TEST_CASE( "CaptureStore deleteCaptureFiles suppresses destructor persistence" )
     }
 
     REQUIRE_FALSE( QFileInfo::exists( capturePath ) );
+}
+
+TEST_CASE( "CaptureStore cleanupUnusedCapturesAsync removes orphan captures off the startup path" )
+{
+    const auto rootPath = makeTestDir( "capturestore_async_cleanup" );
+    const auto retainedCaptureId = makeCaptureId();
+    const auto orphanCaptureId = makeCaptureId();
+    const auto retainedPath = QDir( rootPath ).filePath( retainedCaptureId );
+    const auto orphanPath = QDir( rootPath ).filePath( orphanCaptureId );
+
+    REQUIRE( QDir{}.mkpath( retainedPath ) );
+    REQUIRE( QDir{}.mkpath( orphanPath ) );
+
+    QFile orphanSegment( QDir( orphanPath ).filePath( QStringLiteral( "segment_000000.log" ) ) );
+    REQUIRE( orphanSegment.open( QIODevice::WriteOnly | QIODevice::Truncate ) );
+    orphanSegment.write( QByteArray( 1024 * 1024, 'x' ) );
+    orphanSegment.close();
+
+    QElapsedTimer timer;
+    timer.start();
+    CaptureStore::cleanupUnusedCapturesAsync( QSet<QString>{ retainedCaptureId }, rootPath );
+    const auto elapsedMs = timer.elapsed();
+
+    INFO( "cleanup scheduling elapsed ms: " << elapsedMs );
+    CHECK( elapsedMs < 200 );
+    REQUIRE( QDir{ retainedPath }.exists() );
+
+    QElapsedTimer deadline;
+    deadline.start();
+    while ( QDir{ orphanPath }.exists() && deadline.elapsed() < 5000 ) {
+        std::this_thread::sleep_for( std::chrono::milliseconds( 20 ) );
+    }
+
+    REQUIRE_FALSE( QDir{ orphanPath }.exists() );
+    REQUIRE( QDir{ retainedPath }.exists() );
+}
+
+TEST_CASE( "CaptureStore cleanupUnusedCaptures preserves captures modified after cutoff" )
+{
+    const auto rootPath = makeTestDir( "capturestore_cleanup_cutoff" );
+    const auto orphanCaptureId = makeCaptureId();
+    const auto activeCaptureId = makeCaptureId();
+    const auto orphanPath = QDir( rootPath ).filePath( orphanCaptureId );
+    const auto activePath = QDir( rootPath ).filePath( activeCaptureId );
+
+    REQUIRE( QDir{}.mkpath( orphanPath ) );
+    QFile orphanSegment( QDir( orphanPath ).filePath( QStringLiteral( "segment_000000.log" ) ) );
+    REQUIRE( orphanSegment.open( QIODevice::WriteOnly | QIODevice::Truncate ) );
+    orphanSegment.write( QByteArrayLiteral( "old\n" ) );
+    orphanSegment.close();
+
+    const auto cleanupCutoff = QDateTime::currentDateTimeUtc();
+    std::this_thread::sleep_for( std::chrono::milliseconds( 20 ) );
+
+    REQUIRE( QDir{}.mkpath( activePath ) );
+    QFile activeSegment( QDir( activePath ).filePath( QStringLiteral( "segment_000000.log" ) ) );
+    REQUIRE( activeSegment.open( QIODevice::WriteOnly | QIODevice::Truncate ) );
+    activeSegment.write( QByteArrayLiteral( "new\n" ) );
+    activeSegment.close();
+
+    CaptureStore::cleanupUnusedCaptures( {}, rootPath, cleanupCutoff );
+
+    REQUIRE_FALSE( QDir{ orphanPath }.exists() );
+    REQUIRE( QDir{ activePath }.exists() );
 }
 
 TEST_CASE( "CaptureStore bindOutputFile overwrites existing files and replays spilled segments" )

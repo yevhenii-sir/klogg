@@ -78,6 +78,58 @@ struct TabGroupCleanupGuard {
     }
 };
 
+struct SessionInfoWindowSnapshot {
+    QString id;
+    QByteArray geometry;
+    int currentFileIndex = -1;
+    std::vector<SessionInfo::OpenFile> openFiles;
+};
+
+class SessionInfoRestoreGuard {
+  public:
+    explicit SessionInfoRestoreGuard( SessionInfo& sessionInfo )
+        : sessionInfo_{ sessionInfo }
+    {
+        for ( const auto& windowId : sessionInfo_.windows() ) {
+            snapshots_.push_back( { windowId, sessionInfo_.geometry( windowId ),
+                                    sessionInfo_.currentFileIndex( windowId ),
+                                    sessionInfo_.openFiles( windowId ) } );
+        }
+    }
+
+    ~SessionInfoRestoreGuard()
+    {
+        QStringList originalWindowIds;
+        for ( const auto& snapshot : snapshots_ ) {
+            originalWindowIds.push_back( snapshot.id );
+            sessionInfo_.add( snapshot.id );
+            sessionInfo_.setGeometry( snapshot.id, snapshot.geometry );
+            sessionInfo_.setCurrentFileIndex( snapshot.id, snapshot.currentFileIndex );
+            sessionInfo_.setOpenFiles( snapshot.id, snapshot.openFiles );
+        }
+
+        for ( const auto& windowId : sessionInfo_.windows() ) {
+            if ( !originalWindowIds.contains( windowId ) ) {
+                sessionInfo_.remove( windowId );
+            }
+        }
+
+        if ( snapshots_.empty() ) {
+            for ( const auto& windowId : sessionInfo_.windows() ) {
+                sessionInfo_.setGeometry( windowId, {} );
+                sessionInfo_.setCurrentFileIndex( windowId, -1 );
+                sessionInfo_.setOpenFiles( windowId, {} );
+            }
+        }
+
+        sessionInfo_.save();
+    }
+
+  private:
+    SessionInfo& sessionInfo_;
+    std::vector<SessionInfoWindowSnapshot> snapshots_;
+};
+
 QToolButton* findGroupChipButton( QTabBar* tabBar, int tabIndex )
 {
     if ( tabBar == nullptr || tabIndex < 0 || tabIndex >= tabBar->count() ) {
@@ -663,6 +715,67 @@ SCENARIO( "MainWindow close preserves restored ADB capture files", "[ui][session
 
     config.setMinimizeToTray( previousMinimizeToTray );
     config.save();
+}
+
+SCENARIO( "MainWindow restored iOS live log tabs show disconnected state",
+          "[ui][session][ios]" )
+{
+    auto appSession = std::make_shared<Session>();
+    auto& sessionInfo = SessionInfo::getSynced();
+    SessionInfoRestoreGuard sessionInfoRestoreGuard{ sessionInfo };
+    const auto windowIds = sessionInfo.windows();
+    const auto windowId = QString( "restore-ios-session-%1" ).arg(
+        QUuid::createUuid().toString( QUuid::WithoutBraces ) );
+
+    sessionInfo.add( windowId );
+    for ( const auto& existingWindowId : windowIds ) {
+        sessionInfo.remove( existingWindowId );
+    }
+
+    const AdbLogcatSessionData iosSessionData{
+        QStringLiteral( "pymobiledevice3" ),
+        QStringLiteral( "00008030-001C195E36D8802E" ),
+        QStringLiteral( "iPhone Test" ),
+        QString{},
+        QString( "ios_capture_%1" ).arg( QUuid::createUuid().toString( QUuid::WithoutBraces ) ),
+        QString{},
+        LiveLogSourceType::IosLogStream,
+    };
+    const auto sourceSpec = QString::fromUtf8(
+        QJsonDocument( iosSessionData.toJson() ).toJson( QJsonDocument::Compact ) );
+
+    sessionInfo.setOpenFiles(
+        windowId, { SessionInfo::OpenFile( iosSessionData.documentId(), 0, {},
+                                           iosSessionData.persistedSourceType(),
+                                           iosSessionData.displayName(), sourceSpec ) } );
+    sessionInfo.setCurrentFileIndex( windowId, 0 );
+    sessionInfo.save();
+
+    WindowSession windowSession{ appSession, windowId, 0 };
+
+    std::unique_ptr<MainWindow> mainWindow;
+    QTimer::singleShot( 0, [&] { mainWindow.reset( new MainWindow( windowSession ) ); } );
+
+    QTest::qWait( 100 );
+    mainWindow->show();
+    QTest::qWait( 100 );
+
+    auto runInUiThread = [ uiObject = mainWindow.get() ]( auto&& func ) {
+        QTimer::singleShot( 0, Qt::VeryCoarseTimer, uiObject,
+                            std::forward<decltype( func )>( func ) );
+        QTest::qWait( 100 );
+    };
+
+    auto tabArea = mainWindow->findChild<TabbedCrawlerWidget*>();
+    REQUIRE( tabArea != nullptr );
+
+    runInUiThread( [&mainWindow] { mainWindow->reloadSession(); } );
+    REQUIRE( waitUiState( [&] { return tabArea->count() == 1; } ) );
+    REQUIRE( tabArea->tabText( 0 ) == QStringLiteral( "iPhone Test [disconnected]" ) );
+
+    mainWindow->close();
+    sessionInfo.remove( windowId );
+    sessionInfo.save();
 }
 
 SCENARIO( "Session restore clears unavailable ADB output bindings", "[ui][session][adb]" )
