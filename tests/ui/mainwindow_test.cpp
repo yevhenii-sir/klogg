@@ -267,6 +267,17 @@ SCENARIO( "Main window tests", "[ui]" )
 
             AND_WHEN( "Close tab hotkey pressed" )
             {
+                // Wait for the background loading thread to finish before
+                // closing the tab.  stopLoading() only sets an interrupt flag
+                // -- it does not synchronously join the thread.  On slower
+                // runners (Windows x86 32-bit) the thread may still hold heap
+                // references during teardown, corrupting malloc and causing
+                // SIGSEGV in downstream simdutf free().
+                REQUIRE( waitUiState( [&] {
+                    auto* crawler = qobject_cast<CrawlerWidget*>(tabArea->currentWidget());
+                    return crawler != nullptr && crawler->isFirstLoadDone();
+                } ) );
+
                 runInUiThread( [closeActionByShortcut] {
                     LOG_INFO << "Close tab";
                     closeActionByShortcut->trigger();

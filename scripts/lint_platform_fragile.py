@@ -210,6 +210,81 @@ def _check_main_view_text_pixel_probe(text: str, path: Path) -> list[tuple[int, 
     return findings
 
 
+def _check_test_private_current_crawler(text: str, path: Path) -> list[tuple[int, str]]:
+    """Flag test files that call MainWindow::currentCrawlerWidget() directly.
+
+    currentCrawlerWidget() is private — tests cannot access it. The CI
+    build (GCC 13, -Werror) rejects this as a hard error even if a
+    developer's local build happens to succeed.  Use the public API
+    path instead:
+        qobject_cast<CrawlerWidget*>(tabArea->currentWidget()).
+    """
+    if "test" not in path.name or ALLOW_MARKER in text:
+        return []
+
+    findings: list[tuple[int, str]] = []
+    for i, line in enumerate(text.splitlines(), start=1):
+        if "currentCrawlerWidget()" in line:
+            findings.append(
+                (
+                    i,
+                    "currentCrawlerWidget() is private in MainWindow. "
+                    "Use qobject_cast<CrawlerWidget*>(tabArea->currentWidget()) "
+                    "instead. The CI build (GCC 13, -Werror) rejects direct access "
+                    "as a hard compilation error.",
+                )
+            )
+    return findings
+
+
+def _check_close_without_loading_wait(text: str, path: Path) -> list[tuple[int, str]]:
+    """Flag mainwindow tests that trigger tab-close after file-load without
+    an intervening ``isFirstLoadDone`` wait.
+
+    The test calls loadInitialFile / loadFile and then triggers a
+    destructive close action on the resulting tab.  If the only waits
+    are for UI surface signals (tab count, path label) the file-load may
+    still be in progress on slower runners (especially Windows x86).
+    Closing a tab while the background loading thread holds references
+    to heap allocations causes corruption in the loader's simdutf layer
+    and a downstream free() SIGSEGV.
+
+    The fix is a waitUiState on CrawlerWidget::isFirstLoadDone() before
+    any close, reload, or overlap-sensitive action.
+    """
+    if path.name != "mainwindow_test.cpp" or ALLOW_MARKER in text:
+        return []
+
+    has_load = any(
+        "loadInitialFile" in line or "loadFile(" in line
+        for line in text.splitlines()
+    )
+    has_close = any(
+        "closeAction" in line or "->close()" in line
+        or "closeTab(" in line or "closeAll(" in line
+        for line in text.splitlines()
+    )
+    if not (has_load and has_close):
+        return []
+
+    if "isFirstLoadDone" in text:
+        return []
+
+    return [
+        (
+            1,
+            "mainwindow_test.cpp triggers a destructive close action after "
+            "loadInitialFile/loadFile without waiting for isFirstLoadDone(). "
+            "Add waitUiState([&]{ return "
+            "qobject_cast<CrawlerWidget*>(tabArea->currentWidget())->isFirstLoadDone(); }) "
+            "before any close or reload in load-then-close scenarios.  "
+            "Without this, background loading threads can hold heap "
+            "references during teardown, causing SIGSEGV on slower CI "
+            "runners (esp. Windows x86).",
+        )
+    ]
+
+
 _GUARD_RE = re.compile(r"^\s*#\s*if(?:def|n?def)?\s+(Q_OS_\w+)")
 _ELSE_RE = re.compile(r"^\s*#\s*else")
 _ENDIF_RE = re.compile(r"^\s*#\s*endif")
@@ -254,6 +329,14 @@ MULTI_LINE_CHECKS: list[dict] = [
     {
         "name": "main-view-text-pixel-probe",
         "check": _check_main_view_text_pixel_probe,
+    },
+    {
+        "name": "test-private-current-crawler",
+        "check": _check_test_private_current_crawler,
+    },
+    {
+        "name": "close-without-loading-wait",
+        "check": _check_close_without_loading_wait,
     },
 ]
 
