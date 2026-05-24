@@ -22,6 +22,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QColorDialog>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QHash>
@@ -80,6 +81,40 @@ QIcon makeGroupColorIcon( const QColor& color )
     QPixmap colorIcon( 10, 10 );
     colorIcon.fill( color );
     return QIcon( colorIcon );
+}
+
+QString liveStatusSuffix( const QString& title )
+{
+    QStringList suffixes{
+        QCoreApplication::translate( "MainWindow", " [disconnected]" ),
+        QCoreApplication::translate( "MainWindow", " [error]" ),
+        QStringLiteral( " [disconnected]" ),
+        QStringLiteral( " [error]" ),
+    };
+    suffixes.removeDuplicates();
+
+    for ( const auto& suffix : suffixes ) {
+        if ( !suffix.isEmpty() && title.endsWith( suffix ) ) {
+            return suffix;
+        }
+    }
+
+    return {};
+}
+
+QString tabLabelWithoutLiveStatus( QString label )
+{
+    const auto suffix = liveStatusSuffix( label );
+    if ( !suffix.isEmpty() ) {
+        label.chop( suffix.size() );
+    }
+    return label;
+}
+
+QString tabLabelWithLiveStatus( const QString& label, const QString& storedTitle )
+{
+    const auto suffix = liveStatusSuffix( storedTitle );
+    return suffix.isEmpty() ? label : tabLabelWithoutLiveStatus( label ) + suffix;
 }
 
 bool isGroupChipWidget( const QWidget* widget )
@@ -222,8 +257,7 @@ void TabbedCrawlerWidget::addTabBarItem( int index, const QString& documentId,
                                          const QString& displayName, const QString& toolTip )
 {
     const auto tabLabel = displayName.isEmpty() ? QFileInfo( documentId ).fileName() : displayName;
-    const auto tabName
-        = displayName.isEmpty() ? TabNameMapping::getSynced().tabName( documentId ) : QString{};
+    const auto tabName = TabNameMapping::getSynced().tabName( documentId );
     const auto nativeToolTip
         = toolTip.isEmpty() ? QDir::toNativeSeparators( documentId ) : QDir::toNativeSeparators( toolTip );
 
@@ -271,8 +305,12 @@ void TabbedCrawlerWidget::updateCrawler( int index, const QString& displayName,
     myTabBar_.setTabToolTip( index, QDir::toNativeSeparators( toolTip ) );
 
     const auto documentId = tabData.value( PathKey ).toString();
-    if ( TabNameMapping::getSynced().tabName( documentId ).isEmpty() ) {
+    const auto customName = TabNameMapping::getSynced().tabName( documentId );
+    if ( customName.isEmpty() ) {
         myTabBar_.setTabText( index, displayName );
+    }
+    else {
+        myTabBar_.setTabText( index, tabLabelWithLiveStatus( customName, displayName ) );
     }
 }
 
@@ -603,21 +641,25 @@ void TabbedCrawlerWidget::showContextMenu( int tab, QPoint globalPoint )
 
     connect( renameTab, &QAction::triggered, this, [ this, tab, tabPath ] {
         const auto currentName = TabNameMapping::getSynced().tabName( tabPath );
+        const auto storedTitle = myTabBar_.tabData( tab ).toMap().value( TitleKey ).toString();
         const auto defaultName
             = currentName.isEmpty()
-                  ? myTabBar_.tabData( tab ).toMap().value( TitleKey ).toString()
-                  : currentName;
+                  ? tabLabelWithoutLiveStatus( storedTitle )
+                  : tabLabelWithoutLiveStatus( currentName );
         bool isNameEntered = false;
         auto newName = QInputDialog::getText( this, "Rename tab", "Tab name", QLineEdit::Normal,
                                               defaultName, &isNameEntered );
         if ( isNameEntered ) {
+            newName = tabLabelWithoutLiveStatus( newName );
             TabNameMapping::getSynced().setTabName( tabPath, newName ).save();
 
             if ( newName.isEmpty() ) {
-                myTabBar_.setTabText( tab, QFileInfo( tabPath ).fileName() );
+                myTabBar_.setTabText( tab,
+                                      storedTitle.isEmpty() ? QFileInfo( tabPath ).fileName()
+                                                            : storedTitle );
             }
             else {
-                myTabBar_.setTabText( tab, std::move( newName ) );
+                myTabBar_.setTabText( tab, tabLabelWithLiveStatus( newName, storedTitle ) );
             }
         }
     } );
@@ -956,7 +998,7 @@ void TabbedCrawlerWidget::onGroupsChanged()
         const auto originalTabLabel
             = customName.isEmpty()
                   ? ( storedTitle.isEmpty() ? QFileInfo( tabPath ).fileName() : storedTitle )
-                  : customName;
+                  : tabLabelWithLiveStatus( customName, storedTitle );
         const auto originalTooltip
             = storedToolTip.isEmpty() ? QDir::toNativeSeparators( tabPath ) : storedToolTip;
 

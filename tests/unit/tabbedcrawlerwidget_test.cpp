@@ -19,10 +19,15 @@
 
 #include <catch2/catch.hpp>
 
+#include <QCoreApplication>
 #include <QDir>
+#include <QTranslator>
 #include <QWidget>
 
+#include <utility>
+
 #include "tabbedcrawlerwidget.h"
+#include "tabnamemapping.h"
 
 class DummyCrawlerWidget : public QWidget {
     Q_OBJECT
@@ -32,6 +37,45 @@ class DummyCrawlerWidget : public QWidget {
 
   Q_SIGNALS:
     void dataStatusChanged( DataStatus status );
+};
+
+class ScopedTabNameMapping {
+  public:
+    ScopedTabNameMapping( QString path, QString name )
+        : path_( std::move( path ) )
+    {
+        TabNameMapping::getSynced().setTabName( path_, std::move( name ) ).save();
+    }
+
+    ~ScopedTabNameMapping()
+    {
+        TabNameMapping::getSynced().setTabName( path_, QString{} ).save();
+    }
+
+  private:
+    QString path_;
+};
+
+class LiveStatusTranslator : public QTranslator {
+  public:
+    QString translate( const char* context, const char* sourceText, const char* disambiguation,
+                       int n ) const override
+    {
+        Q_UNUSED( disambiguation )
+        Q_UNUSED( n )
+
+        if ( QString::fromLatin1( context ) == QStringLiteral( "MainWindow" )
+             && QString::fromLatin1( sourceText ) == QStringLiteral( " [error]" ) ) {
+            return QStringLiteral( " [erreur]" );
+        }
+
+        if ( QString::fromLatin1( context ) == QStringLiteral( "MainWindow" )
+             && QString::fromLatin1( sourceText ) == QStringLiteral( " [disconnected]" ) ) {
+            return QStringLiteral( " [deconnecte]" );
+        }
+
+        return {};
+    }
 };
 
 TEST_CASE( "TabbedCrawlerWidget keeps live tab title and tooltip across group refreshes" )
@@ -101,6 +145,75 @@ TEST_CASE( "TabbedCrawlerWidget updateCrawler reflects disconnect and error stat
         tabWidget.onGroupsChanged();
         REQUIRE( tabWidget.tabText( index ) == QStringLiteral( "Galaxy S24 [error]" ) );
     }
+}
+
+TEST_CASE( "TabbedCrawlerWidget keeps live status visible on renamed tabs" )
+{
+    const auto documentId = QStringLiteral( "adb://capture-renamed-status" );
+    const ScopedTabNameMapping tabNameMapping{ documentId, QStringLiteral( "Lab Phone" ) };
+
+    TabbedCrawlerWidget tabWidget;
+    auto* crawler = new DummyCrawlerWidget();
+
+    const auto index = tabWidget.addCrawler( crawler, documentId, QStringLiteral( "Galaxy S24" ),
+                                             QStringLiteral( "/tmp/galaxy.log" ) );
+
+    REQUIRE( tabWidget.tabText( index ).toStdString() == std::string( "Lab Phone" ) );
+
+    tabWidget.updateCrawler( index, QStringLiteral( "Galaxy S24 [disconnected]" ),
+                             QStringLiteral( "/tmp/galaxy.log" ) );
+
+    REQUIRE( tabWidget.tabText( index ).toStdString()
+             == std::string( "Lab Phone [disconnected]" ) );
+
+    tabWidget.updateCrawler( index, QStringLiteral( "Galaxy S24 [error]" ),
+                             QStringLiteral( "/tmp/galaxy.log" ) );
+
+    REQUIRE( tabWidget.tabText( index ).toStdString() == std::string( "Lab Phone [error]" ) );
+
+    tabWidget.updateCrawler( index, QStringLiteral( "Galaxy S24" ),
+                             QStringLiteral( "/tmp/galaxy.log" ) );
+
+    REQUIRE( tabWidget.tabText( index ).toStdString() == std::string( "Lab Phone" ) );
+}
+
+TEST_CASE( "TabbedCrawlerWidget does not duplicate live status from renamed tabs" )
+{
+    const auto documentId = QStringLiteral( "adb://capture-renamed-status-duplicate" );
+    const ScopedTabNameMapping tabNameMapping{ documentId, QStringLiteral( "Lab Phone [error]" ) };
+
+    TabbedCrawlerWidget tabWidget;
+    auto* crawler = new DummyCrawlerWidget();
+
+    const auto index = tabWidget.addCrawler( crawler, documentId, QStringLiteral( "Galaxy S24" ),
+                                             QStringLiteral( "/tmp/galaxy.log" ) );
+
+    tabWidget.updateCrawler( index, QStringLiteral( "Galaxy S24 [error]" ),
+                             QStringLiteral( "/tmp/galaxy.log" ) );
+
+    REQUIRE( tabWidget.tabText( index ).toStdString() == std::string( "Lab Phone [error]" ) );
+}
+
+TEST_CASE( "TabbedCrawlerWidget keeps localized live status visible on renamed tabs" )
+{
+    LiveStatusTranslator translator;
+    QCoreApplication::installTranslator( &translator );
+
+    const auto documentId = QStringLiteral( "adb://capture-renamed-status-localized" );
+    const ScopedTabNameMapping tabNameMapping{ documentId, QStringLiteral( "Lab Phone" ) };
+
+    TabbedCrawlerWidget tabWidget;
+    auto* crawler = new DummyCrawlerWidget();
+
+    const auto index = tabWidget.addCrawler( crawler, documentId, QStringLiteral( "Galaxy S24" ),
+                                             QStringLiteral( "/tmp/galaxy.log" ) );
+
+    tabWidget.updateCrawler( index, QStringLiteral( "Galaxy S24 [erreur]" ),
+                             QStringLiteral( "/tmp/galaxy.log" ) );
+
+    QCoreApplication::removeTranslator( &translator );
+
+    REQUIRE( tabWidget.tabText( index ).toStdString() == std::string( "Lab Phone [erreur]" ) );
 }
 
 #include "tabbedcrawlerwidget_test.moc"
