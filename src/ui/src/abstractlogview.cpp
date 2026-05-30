@@ -1032,7 +1032,8 @@ void AbstractLogView::wheelEvent( QWheelEvent* wheelEvent )
         jumpToBottom();
 
     const auto allowFollowOnScroll = Configuration::get().allowFollowOnScroll();
-    if ( verticalScrollBar()->value() == verticalScrollBar()->maximum() ) {
+    if ( verticalScrollBar()->maximum() > 0
+         && verticalScrollBar()->value() == verticalScrollBar()->maximum() ) {
         if ( allowFollowOnScroll || yDelta > 0 ) {
             // First see if we need to block the elastic (on Mac)
             if ( wheelEvent->phase() == Qt::ScrollBegin ) {
@@ -1236,7 +1237,11 @@ void AbstractLogView::paintEvent( QPaintEvent* paintEvent )
 
     if ( shouldBottomAlignFrame() ) {
         int hiddenHeightPx = std::max( 0, effectiveHeight - availableTextHeight );
-        drawingTopOffset_ = verticalScrollBar()->maximum() == 0 ? 0 : -hiddenHeightPx;
+        const bool wrappedContentOverflows
+            = useTextWrap_ && textAreaCache_.actual_height_ > availableTextHeight;
+        const bool contentFitsEmptyScrollRange
+            = verticalScrollBar()->maximum() == 0 && !wrappedContentOverflows;
+        drawingTopOffset_ = contentFitsEmptyScrollRange ? 0 : -hiddenHeightPx;
         drawingTopPosition = drawingTopOffset_;
 
         const int heightForPullToFollow = ( useTextWrap_ && textAreaCache_.actual_height_ > 0 )

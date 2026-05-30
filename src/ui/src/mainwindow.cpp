@@ -592,6 +592,7 @@ void MainWindow::createActions()
              [ this ]( auto ) { this->clearRecentFileActions(); } );
 
     closeAction = new QAction( tr( action::closeText ), this );
+    closeAction->setObjectName( QStringLiteral( "closeAction" ) );
     closeAction->setStatusTip( tr( action::closeStatusTip ) );
     connect( closeAction, &QAction::triggered, this,
              [ this ]( auto ) { this->closeTab( ActionInitiator::User ); } );
@@ -865,6 +866,12 @@ void MainWindow::updateShortcuts()
     ShortcutAction::registerShortcut( shortcuts, shortcuts_, this, Qt::WindowShortcut,
                                       ShortcutAction::MainWindowMin,
                                       [ this ] { this->showMinimized(); } );
+    ShortcutAction::registerShortcut( shortcuts, shortcuts_, this, Qt::WindowShortcut,
+                                      ShortcutAction::MainWindowNextTab,
+                                      [ this ] { mainTabWidget_.selectNextTab(); } );
+    ShortcutAction::registerShortcut( shortcuts, shortcuts_, this, Qt::WindowShortcut,
+                                      ShortcutAction::MainWindowPreviousTab,
+                                      [ this ] { mainTabWidget_.selectPreviousTab(); } );
 
     auto setShortcuts = [ &shortcuts ]( auto* action, const auto& actionName ) {
         action->setShortcuts( ShortcutAction::shortcutKeys( actionName, shortcuts ) );
@@ -2389,22 +2396,23 @@ void MainWindow::updateLiveTabAppearance( CrawlerWidget* crawler )
                              ? displayName
                              : session_.getAssociatedPath( crawler );
 
-    QString title = displayName;
     QString toolTip = baseTip;
     if ( source ) {
         const auto state = source->state();
+        LiveTabStatus liveStatus = LiveTabStatus::Connected;
         if ( state == AdbLogcatSource::State::Error ) {
-            title += tr( " [error]" );
+            liveStatus = LiveTabStatus::Error;
             if ( !source->lastError().isEmpty() ) {
                 toolTip = tr( "%1\nError: %2" ).arg( baseTip, source->lastError() );
             }
         }
         else if ( state == AdbLogcatSource::State::Disconnected ) {
-            title += tr( " [disconnected]" );
+            liveStatus = LiveTabStatus::Disconnected;
         }
+        mainTabWidget_.setLiveTabStatus( tabIndex, liveStatus );
     }
 
-    mainTabWidget_.updateCrawler( tabIndex, title, toolTip );
+    mainTabWidget_.updateCrawler( tabIndex, displayName, toolTip );
 }
 
 void MainWindow::registerAdbLogcatSource( CrawlerWidget* crawler )

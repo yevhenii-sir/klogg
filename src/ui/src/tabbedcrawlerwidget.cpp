@@ -30,7 +30,9 @@
 #include <QKeyEvent>
 #include <QMenu>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPalette>
+#include <QPointer>
 #include <QSet>
 #include <QSizePolicy>
 #include <QToolButton>
@@ -56,6 +58,7 @@ constexpr QLatin1String PathKey = QLatin1String( "path", 4 );
 constexpr QLatin1String TitleKey = QLatin1String( "title", 5 );
 constexpr QLatin1String ToolTipKey = QLatin1String( "toolTip", 7 );
 constexpr QLatin1String StatusKey = QLatin1String( "status", 6 );
+constexpr QLatin1String LiveStatusKey = QLatin1String( "liveStatus", 10 );
 constexpr QLatin1String GroupIdKey = QLatin1String( "groupId", 7 );
 constexpr QLatin1String GroupColorKey = QLatin1String( "groupColor", 10 );
 constexpr QLatin1String GroupLeaderKey = QLatin1String( "groupLeader", 11 );
@@ -81,6 +84,83 @@ QIcon makeGroupColorIcon( const QColor& color )
     QPixmap colorIcon( 10, 10 );
     colorIcon.fill( color );
     return QIcon( colorIcon );
+}
+
+QColor liveStatusColor( LiveTabStatus status )
+{
+    switch ( status ) {
+    case LiveTabStatus::Connected:
+        return QColor( 0x4C, 0xAF, 0x50 ); // Green
+    case LiveTabStatus::Disconnected:
+        return QColor( 0xFF, 0xC1, 0x07 ); // Amber
+    case LiveTabStatus::Error:
+        return QColor( 0xF4, 0x43, 0x36 ); // Red
+    default:
+        return {};
+    }
+}
+
+QIcon makeDotIcon( const QColor& color, DataStatus dataStatus )
+{
+    QIcon icon;
+
+    const QList<int> sizes = { 16, 20, 24, 32 };
+    for ( int size : sizes ) {
+        QPixmap pixmap( size, size );
+        pixmap.fill( Qt::transparent );
+
+        QPainter painter( &pixmap );
+        painter.setRenderHint( QPainter::Antialiasing, true );
+
+        const qreal margin = size * 0.25;
+        const qreal cx = size / 2.0;
+        const qreal cy = size / 2.0;
+        const qreal r = ( size - 2.0 * margin ) / 2.0;
+        const qreal strokeWidth = size * 0.07;
+
+        switch ( dataStatus ) {
+        case DataStatus::NEW_DATA: {
+            // Solid circle
+            painter.setPen( Qt::NoPen );
+            painter.setBrush( color );
+            painter.drawEllipse( QPointF( cx, cy ), r, r );
+            break;
+        }
+        case DataStatus::OLD_DATA: {
+            // Hollow circle
+            painter.setPen( QPen( color, strokeWidth ) );
+            painter.setBrush( Qt::NoBrush );
+            painter.drawEllipse( QPointF( cx, cy ), r, r );
+            break;
+        }
+        case DataStatus::NEW_FILTERED_DATA: {
+            // Hollow circle with triangle indicator
+            painter.setPen( QPen( color, strokeWidth ) );
+            painter.setBrush( Qt::NoBrush );
+            painter.drawEllipse( QPointF( cx, cy ), r, r );
+
+            // Small triangle indicator at top-left area inside the circle
+            const qreal tw = r * 0.55;
+            const qreal th = r * 0.45;
+            const qreal tx = cx - tw * 0.4;
+            const qreal ty = cy - r * 0.6;
+            QPainterPath triangle;
+            triangle.moveTo( tx, ty );
+            triangle.lineTo( tx + tw, ty + th / 2.0 );
+            triangle.lineTo( tx, ty + th );
+            triangle.closeSubpath();
+            painter.setPen( Qt::NoPen );
+            painter.setBrush( color );
+            painter.drawPath( triangle );
+            break;
+        }
+        }
+
+        painter.end();
+        icon.addPixmap( pixmap );
+    }
+
+    return icon;
 }
 
 QString liveStatusSuffix( const QString& title )
@@ -111,12 +191,6 @@ QString tabLabelWithoutLiveStatus( QString label )
     return label;
 }
 
-QString tabLabelWithLiveStatus( const QString& label, const QString& storedTitle )
-{
-    const auto suffix = liveStatusSuffix( storedTitle );
-    return suffix.isEmpty() ? label : tabLabelWithoutLiveStatus( label ) + suffix;
-}
-
 bool isGroupChipWidget( const QWidget* widget )
 {
     return widget != nullptr && widget->property( GroupChipPropertyKey ).toBool();
@@ -136,10 +210,24 @@ bool shouldUseDarkTabIcons( const QWidget* widget, const Configuration& config )
 }
 } // namespace
 
+QIcon TabbedCrawlerWidget::generateColoredDotIcon( LiveTabStatus liveStatus, DataStatus dataStatus )
+{
+    return makeDotIcon( liveStatusColor( liveStatus ), dataStatus );
+}
+
 CrawlerTabBar::CrawlerTabBar( QWidget* parent )
     : QTabBar( parent )
 {
+    syncGeometryTimer_.setSingleShot( true );
+    syncGeometryTimer_.setInterval( 0 );
+    connect( &syncGeometryTimer_, &QTimer::timeout, this, &CrawlerTabBar::syncTabButtonGeometry );
+
     connect( this, &QTabBar::tabMoved, this, &CrawlerTabBar::handleTabMoved );
+}
+
+CrawlerTabBar::~CrawlerTabBar()
+{
+    syncGeometryTimer_.stop();
 }
 
 TabbedCrawlerWidget::TabbedCrawlerWidget()
@@ -172,7 +260,12 @@ TabbedCrawlerWidget::TabbedCrawlerWidget()
     connect( &groupManager, &TabGroupManager::groupsChanged, this,
              &TabbedCrawlerWidget::onGroupsChanged );
 
-    dispatchToMainThread( [ this ] { loadIcons(); } );
+    const QPointer<TabbedCrawlerWidget> guard( this );
+    dispatchToMainThread( [ guard ] {
+        if ( guard ) {
+            guard->loadIcons();
+        }
+    } );
 }
 
 void TabbedCrawlerWidget::loadIcons()
@@ -181,6 +274,25 @@ void TabbedCrawlerWidget::loadIcons()
     olddata_icon_ = iconLoader.load( "olddata_icon" );
     newdata_icon_ = iconLoader.load( "newdata_icon" );
     newfiltered_icon_ = iconLoader.load( "newfiltered_icon" );
+
+    // Generate colored icons for live stream tab statuses
+    constexpr LiveTabStatus liveStatuses[] = {
+        LiveTabStatus::Connected,
+        LiveTabStatus::Disconnected,
+        LiveTabStatus::Error,
+    };
+    constexpr DataStatus dataStatuses[] = {
+        DataStatus::OLD_DATA,
+        DataStatus::NEW_DATA,
+        DataStatus::NEW_FILTERED_DATA,
+    };
+    for ( auto ls : liveStatuses ) {
+        for ( auto ds : dataStatuses ) {
+            live_icons_[ static_cast<int>( ls ) ][ static_cast<int>( ds ) ]
+                = generateColoredDotIcon( ls, ds );
+        }
+    }
+
     for ( int tab = 0; tab < count(); ++tab ) {
         updateIcon( tab );
     }
@@ -194,17 +306,49 @@ void TabbedCrawlerWidget::updateTabBarStyle()
         return;
     }
 
-    QString tabStyle = "QTabBar::tab { height: 24px; }";
+    const bool useDarkIcons = shouldUseDarkTabIcons( this, config );
+    const auto trackColor = useDarkIcons ? QColor( "#202327" ) : QColor( "#E9EDF2" );
+    const auto selectedColor = useDarkIcons ? QColor( "#4B5053" ) : QColor( "#FFFFFF" );
+    const auto hoverColor = useDarkIcons ? QColor( "#2C3136" ) : QColor( "#F5F7FA" );
+    const auto borderColor = useDarkIcons ? QColor( "#62696E" ) : QColor( "#BCC4CE" );
+    const auto mutedTextColor = useDarkIcons ? QColor( "#9EA3A8" ) : QColor( "#626B75" );
+    const auto textColor = useDarkIcons ? QColor( "#F0F1F2" ) : QColor( "#202326" );
+
+    QString tabStyle = QStringLiteral(
+                           "QTabBar {"
+                           "background-color: %1;"
+                           "border: 1px solid %2;"
+                           "border-radius: 15px;"
+                           "padding: 2px;"
+                           "}"
+                           "QTabBar::tab {"
+                           "background-color: transparent;"
+                           "color: %3;"
+                           "height: 20px;"
+                           "padding: 3px 12px;"
+                           "border: 1px solid transparent;"
+                           "border-radius: 13px;"
+                           "margin: 2px 2px;"
+                           "}"
+                           "QTabBar::tab:selected {"
+                           "background-color: %4;"
+                           "color: %5;"
+                           "border: 1px solid %2;"
+                           "font-weight: 600;"
+                           "}"
+                           "QTabBar::tab:hover:!selected {"
+                           "background-color: %6;"
+                           "color: %5;"
+                           "}" )
+                           .arg( trackColor.name(), borderColor.name(), mutedTextColor.name(),
+                                 selectedColor.name(), textColor.name(), hoverColor.name() );
     QString tabCloseButtonStyle = " QTabBar::close-button {\
               height: 12px; width: 12px;\
-              subcontrol-origin: padding;\
-              subcontrol-position: right;\
               %1}";
 
     QString backgroundImage;
     QString backgroundHoverImage;
 
-    const bool useDarkIcons = shouldUseDarkTabIcons( this, config );
     if ( useDarkIcons ) {
         backgroundImage = ":/images/icons8-close-window_inverse.svg";
         backgroundHoverImage = ":/images/icons8-close-window-hover_inverse.svg";
@@ -247,7 +391,12 @@ void TabbedCrawlerWidget::changeEvent( QEvent* event )
 {
     if ( event->type() == QEvent::StyleChange || event->type() == QEvent::PaletteChange ) {
         updateTabBarStyle();
-        dispatchToMainThread( [ this ] { loadIcons(); } );
+        const QPointer<TabbedCrawlerWidget> guard( this );
+        dispatchToMainThread( [ guard ] {
+            if ( guard ) {
+                guard->loadIcons();
+            }
+        } );
     }
 
     QWidget::changeEvent( event );
@@ -270,6 +419,7 @@ void TabbedCrawlerWidget::addTabBarItem( int index, const QString& documentId,
     tabData[ TitleKey ] = tabLabel;
     tabData[ ToolTipKey ] = nativeToolTip;
     tabData[ StatusKey ] = static_cast<int>( DataStatus::OLD_DATA );
+    tabData[ LiveStatusKey ] = static_cast<int>( LiveTabStatus::None );
 
     myTabBar_.setTabData( index, tabData );
 
@@ -305,13 +455,38 @@ void TabbedCrawlerWidget::updateCrawler( int index, const QString& displayName,
     myTabBar_.setTabToolTip( index, QDir::toNativeSeparators( toolTip ) );
 
     const auto documentId = tabData.value( PathKey ).toString();
-    const auto customName = TabNameMapping::getSynced().tabName( documentId );
+    const auto rawCustomName = TabNameMapping::getSynced().tabName( documentId );
+    // Strip any old-format live status suffix from both the display name and custom name
+    const auto cleanDisplayName = tabLabelWithoutLiveStatus( displayName );
+    const auto customName = tabLabelWithoutLiveStatus( rawCustomName );
     if ( customName.isEmpty() ) {
-        myTabBar_.setTabText( index, displayName );
+        myTabBar_.setTabText( index, cleanDisplayName );
     }
     else {
-        myTabBar_.setTabText( index, tabLabelWithLiveStatus( customName, displayName ) );
+        myTabBar_.setTabText( index, customName );
     }
+}
+
+void TabbedCrawlerWidget::selectNextTab()
+{
+    const auto tabCount = count();
+    if ( tabCount <= 1 ) {
+        return;
+    }
+
+    const auto activeIndex = currentIndex();
+    setCurrentIndex( activeIndex < 0 ? 0 : ( activeIndex + 1 ) % tabCount );
+}
+
+void TabbedCrawlerWidget::selectPreviousTab()
+{
+    const auto tabCount = count();
+    if ( tabCount <= 1 ) {
+        return;
+    }
+
+    const auto activeIndex = currentIndex();
+    setCurrentIndex( activeIndex <= 0 ? tabCount - 1 : activeIndex - 1 );
 }
 
 void TabbedCrawlerWidget::mouseReleaseEvent( QMouseEvent* event )
@@ -525,9 +700,16 @@ void CrawlerTabBar::handleTabMoved( int from, int to )
     tabMovedWhilePressed_ = true;
 }
 
+void CrawlerTabBar::resizeEvent( QResizeEvent* event )
+{
+    QTabBar::resizeEvent( event );
+    scheduleTabButtonGeometrySync();
+}
+
 void CrawlerTabBar::paintEvent( QPaintEvent* event )
 {
     QTabBar::paintEvent( event );
+    scheduleTabButtonGeometrySync();
 
     QPainter painter( this );
     painter.setRenderHint( QPainter::Antialiasing, true );
@@ -556,6 +738,51 @@ void CrawlerTabBar::paintEvent( QPaintEvent* event )
         painter.setPen( Qt::NoPen );
         painter.setBrush( adjustedGroupFillColor( groupColor, i == currentIndex() ) );
         painter.drawRoundedRect( tabRectValue, 3, 3 );
+    }
+}
+
+void CrawlerTabBar::scheduleTabButtonGeometrySync()
+{
+    // Defer geometry sync to the next event-loop iteration to avoid
+    // modifying child widgets during paintEvent — doing so would
+    // invalidate layout and trigger another paint, creating an
+    // infinite repaint loop.
+    syncGeometryTimer_.start();
+}
+
+void CrawlerTabBar::syncTabButtonGeometry()
+{
+    const auto alignButton = [ this ]( int tab, QTabBar::ButtonPosition position ) {
+        auto* button = tabButton( tab, position );
+        if ( button == nullptr || isGroupChipWidget( button ) ) {
+            return;
+        }
+
+        const auto tabRectValue = tabRect( tab );
+        const bool visible = tabRectValue.intersects( rect() );
+        button->setVisible( visible );
+        if ( !visible ) {
+            return;
+        }
+
+        const auto hint = button->sizeHint();
+        const auto width = qMax( button->width(), hint.width() );
+        const auto height = qMax( button->height(), hint.height() );
+        if ( button->size() != QSize( width, height ) ) {
+            button->resize( width, height );
+        }
+
+        const int margin = 6;
+        const int x = position == QTabBar::LeftSide
+                          ? tabRectValue.left() + margin
+                          : tabRectValue.right() - width - margin + 1;
+        const int y = tabRectValue.top() + ( tabRectValue.height() - height ) / 2;
+        button->move( x, y );
+    };
+
+    for ( int tab = 0; tab < count(); ++tab ) {
+        alignButton( tab, QTabBar::LeftSide );
+        alignButton( tab, QTabBar::RightSide );
     }
 }
 
@@ -641,10 +868,11 @@ void TabbedCrawlerWidget::showContextMenu( int tab, QPoint globalPoint )
 
     connect( renameTab, &QAction::triggered, this, [ this, tab, tabPath ] {
         const auto currentName = TabNameMapping::getSynced().tabName( tabPath );
-        const auto storedTitle = myTabBar_.tabData( tab ).toMap().value( TitleKey ).toString();
+        const auto storedTitle = tabLabelWithoutLiveStatus(
+            myTabBar_.tabData( tab ).toMap().value( TitleKey ).toString() );
         const auto defaultName
             = currentName.isEmpty()
-                  ? tabLabelWithoutLiveStatus( storedTitle )
+                  ? storedTitle
                   : tabLabelWithoutLiveStatus( currentName );
         bool isNameEntered = false;
         auto newName = QInputDialog::getText( this, "Rename tab", "Tab name", QLineEdit::Normal,
@@ -659,7 +887,7 @@ void TabbedCrawlerWidget::showContextMenu( int tab, QPoint globalPoint )
                                                             : storedTitle );
             }
             else {
-                myTabBar_.setTabText( tab, tabLabelWithLiveStatus( newName, storedTitle ) );
+                myTabBar_.setTabText( tab, newName );
             }
         }
     } );
@@ -679,19 +907,17 @@ void TabbedCrawlerWidget::keyPressEvent( QKeyEvent* event )
 
     LOG_DEBUG << "TabbedCrawlerWidget::keyPressEvent";
 
-    // Ctrl + tab
-    if ( ( mod == Qt::ControlModifier && key == Qt::Key_Tab )
-         || ( mod == Qt::ControlModifier && key == Qt::Key_PageDown )
+    // Ctrl + page down
+    if ( ( mod == Qt::ControlModifier && key == Qt::Key_PageDown )
          || ( mod == ( Qt::ControlModifier | Qt::AltModifier | Qt::KeypadModifier )
               && key == Qt::Key_Right ) ) {
-        setCurrentIndex( ( currentIndex() + 1 ) % count() );
+        selectNextTab();
     }
-    // Ctrl + shift + tab
-    else if ( ( mod == ( Qt::ControlModifier | Qt::ShiftModifier ) && key == Qt::Key_Tab )
-              || ( mod == Qt::ControlModifier && key == Qt::Key_PageUp )
+    // Ctrl + page up
+    else if ( ( mod == Qt::ControlModifier && key == Qt::Key_PageUp )
               || ( mod == ( Qt::ControlModifier | Qt::AltModifier | Qt::KeypadModifier )
                    && key == Qt::Key_Left ) ) {
-        setCurrentIndex( ( currentIndex() - 1 >= 0 ) ? currentIndex() - 1 : count() - 1 );
+        selectPreviousTab();
     }
     // Ctrl + numbers
     else if ( mod == Qt::ControlModifier && ( key >= Qt::Key_1 && key <= Qt::Key_8 ) ) {
@@ -715,22 +941,32 @@ void TabbedCrawlerWidget::updateIcon( int index )
 {
     auto tabData = myTabBar_.tabData( index ).toMap();
 
-    const QIcon* icon;
-    switch ( static_cast<DataStatus>( tabData[ StatusKey ].toInt() ) ) {
-    case DataStatus::OLD_DATA:
-        icon = &olddata_icon_;
-        break;
-    case DataStatus::NEW_DATA:
-        icon = &newdata_icon_;
-        break;
-    case DataStatus::NEW_FILTERED_DATA:
-        icon = &newfiltered_icon_;
-        break;
-    default:
-        return;
+    const auto dataStatus = static_cast<DataStatus>( tabData[ StatusKey ].toInt() );
+    const auto liveStatus = static_cast<LiveTabStatus>( tabData.value( LiveStatusKey ).toInt() );
+
+    const QIcon* icon = nullptr;
+    if ( liveStatus == LiveTabStatus::None ) {
+        // Normal file tabs: use the theme-tinted icons from IconLoader
+        switch ( dataStatus ) {
+        case DataStatus::OLD_DATA:
+            icon = &olddata_icon_;
+            break;
+        case DataStatus::NEW_DATA:
+            icon = &newdata_icon_;
+            break;
+        case DataStatus::NEW_FILTERED_DATA:
+            icon = &newfiltered_icon_;
+            break;
+        }
+    }
+    else {
+        // Live stream tabs: use colored status icons
+        icon = &live_icons_[ static_cast<int>( liveStatus ) ][ static_cast<int>( dataStatus ) ];
     }
 
-    myTabBar_.setTabIcon( index, *icon );
+    if ( icon && !icon->isNull() ) {
+        myTabBar_.setTabIcon( index, *icon );
+    }
 }
 
 void TabbedCrawlerWidget::setTabDataStatus( int index, DataStatus status )
@@ -739,6 +975,17 @@ void TabbedCrawlerWidget::setTabDataStatus( int index, DataStatus status )
 
     auto tabData = myTabBar_.tabData( index ).toMap();
     tabData[ StatusKey ] = static_cast<int>( status );
+    myTabBar_.setTabData( index, tabData );
+
+    updateIcon( index );
+}
+
+void TabbedCrawlerWidget::setLiveTabStatus( int index, LiveTabStatus status )
+{
+    LOG_DEBUG << "TabbedCrawlerWidget::setLiveTabStatus " << index;
+
+    auto tabData = myTabBar_.tabData( index ).toMap();
+    tabData[ LiveStatusKey ] = static_cast<int>( status );
     myTabBar_.setTabData( index, tabData );
 
     updateIcon( index );
@@ -993,12 +1240,16 @@ void TabbedCrawlerWidget::onGroupsChanged()
         auto tabData = myTabBar_.tabData( i ).toMap();
 
         const auto customName = tabNameMapping.tabName( tabPath );
-        const auto storedTitle = tabData.value( TitleKey ).toString();
+        // Strip old-format live status suffix from the stored title (backward compat)
+        const auto storedTitle = tabLabelWithoutLiveStatus(
+            tabData.value( TitleKey ).toString() );
         const auto storedToolTip = tabData.value( ToolTipKey ).toString();
+        // Also strip old suffix from custom name in case it was persisted by an older version
+        const auto cleanCustomName = tabLabelWithoutLiveStatus( customName );
         const auto originalTabLabel
-            = customName.isEmpty()
+            = cleanCustomName.isEmpty()
                   ? ( storedTitle.isEmpty() ? QFileInfo( tabPath ).fileName() : storedTitle )
-                  : tabLabelWithLiveStatus( customName, storedTitle );
+                  : cleanCustomName;
         const auto originalTooltip
             = storedToolTip.isEmpty() ? QDir::toNativeSeparators( tabPath ) : storedToolTip;
 

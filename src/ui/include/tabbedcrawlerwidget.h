@@ -34,6 +34,14 @@
 class QMenu;
 class QPaintEvent;
 
+// Connection status of a live log stream tab, used to color the dot indicator.
+enum class LiveTabStatus {
+    None, // Normal file tab (no live source)
+    Connected, // Live stream connected
+    Disconnected, // Live stream disconnected
+    Error // Live stream error
+};
+
 // This class represents glogg's main widget, a tabbed
 // group of CrawlerWidgets.
 // This is a very slightly customised QTabWidget, with
@@ -44,6 +52,7 @@ class CrawlerTabBar : public QTabBar {
 
   public:
     explicit CrawlerTabBar( QWidget* parent = nullptr );
+    ~CrawlerTabBar() override;
 
   Q_SIGNALS:
     void showTabContextMenu( int tab, QPoint point );
@@ -54,13 +63,18 @@ class CrawlerTabBar : public QTabBar {
     void mousePressEvent( QMouseEvent* ) override;
     void mouseReleaseEvent( QMouseEvent* ) override;
     void paintEvent( QPaintEvent* event ) override;
+    void resizeEvent( QResizeEvent* event ) override;
 
   private Q_SLOTS:
     void handleTabMoved( int from, int to );
 
   private:
+    void syncTabButtonGeometry();
+    void scheduleTabButtonGeometrySync();
+
     bool leftButtonPressed_ = false;
     bool tabMovedWhilePressed_ = false;
+    QTimer syncGeometryTimer_;
 };
 
 class TabbedCrawlerWidget : public QTabWidget {
@@ -92,6 +106,16 @@ class TabbedCrawlerWidget : public QTabWidget {
 
     void removeCrawler( int index );
     void updateCrawler( int index, const QString& displayName, const QString& toolTip );
+    void selectNextTab();
+    void selectPreviousTab();
+
+    // Set the live connection status (icon color) for the tab number 'index'
+    void setLiveTabStatus( int index, LiveTabStatus status );
+
+    // Set the data status (icon) for the tab number 'index'
+    void setTabDataStatus( int index, DataStatus status );
+
+    static QIcon generateColoredDotIcon( LiveTabStatus liveStatus, DataStatus dataStatus );
 
   Q_SIGNALS:
     void tabsReordered();
@@ -118,9 +142,6 @@ class TabbedCrawlerWidget : public QTabWidget {
     void clearGroupChip( int tabIndex );
     void populateGroupActions( QMenu* menu, const QString& groupId );
 
-    // Set the data status (icon) for the tab number 'index'
-    void setTabDataStatus( int index, DataStatus status );
-
     void updateTabBarStyle();
     void loadIcons();
     void updateIcon( int index );
@@ -139,6 +160,9 @@ class TabbedCrawlerWidget : public QTabWidget {
     QIcon olddata_icon_;
     QIcon newdata_icon_;
     QIcon newfiltered_icon_;
+
+    // Colored icons for live stream tabs: [liveStatus][dataStatus]
+    QIcon live_icons_[ 4 ][ 3 ];
 
     QString draggedTabPath_;
     bool tabDragInProgress_ = false;

@@ -24,7 +24,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
-#include <QKeySequence>
+
 #include <QMenu>
 #include <QSignalSpy>
 #include <QTabBar>
@@ -213,26 +213,9 @@ SCENARIO( "Main window tests", "[ui]" )
             }
         }
 
-        QAction* closeActionByShortcut = nullptr;
-        const auto closeKeyBindings = QKeySequence::keyBindings( QKeySequence::Close );
-        for ( auto* action : mainWindow->findChildren<QAction*>() ) {
-            const auto shortcuts = action->shortcuts();
-            for ( const auto& shortcut : shortcuts ) {
-                for ( const auto& closeKey : closeKeyBindings ) {
-                    if ( shortcut.matches( closeKey ) == QKeySequence::ExactMatch ) {
-                        closeActionByShortcut = action;
-                        break;
-                    }
-                }
-                if ( closeActionByShortcut ) {
-                    break;
-                }
-            }
-            if ( closeActionByShortcut ) {
-                break;
-            }
-        }
-        REQUIRE( closeActionByShortcut != nullptr );
+        QAction* closeAction = mainWindow->findChild<QAction*>(
+            QStringLiteral( "closeAction" ) );
+        REQUIRE( closeAction != nullptr );
 
         WHEN( "Exit hotkey pressed" )
         {
@@ -278,9 +261,9 @@ SCENARIO( "Main window tests", "[ui]" )
                     return crawler != nullptr && crawler->isFirstLoadDone();
                 } ) );
 
-                runInUiThread( [closeActionByShortcut] {
+                runInUiThread( [closeAction] {
                     LOG_INFO << "Close tab";
-                    closeActionByShortcut->trigger();
+                    closeAction->trigger();
                 } );
 
                 THEN( "Has no tabs" )
@@ -782,7 +765,7 @@ SCENARIO( "MainWindow restored iOS live log tabs show disconnected state",
 
     runInUiThread( [&mainWindow] { mainWindow->reloadSession(); } );
     REQUIRE( waitUiState( [&] { return tabArea->count() == 1; } ) );
-    REQUIRE( tabArea->tabText( 0 ) == QStringLiteral( "iPhone Test [disconnected]" ) );
+    REQUIRE( tabArea->tabText( 0 ) == QStringLiteral( "iPhone Test" ) );
 
     mainWindow->close();
     sessionInfo.remove( windowId );

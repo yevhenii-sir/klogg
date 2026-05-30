@@ -27,6 +27,7 @@
 #include <KDSignalThrottler.h>
 #include <efsw/efsw.hpp>
 
+#include <functional>
 #include <vector>
 
 #if QT_VERSION_MAJOR < 6
@@ -34,6 +35,7 @@
 #endif
 #include <QDir>
 #include <QFileInfo>
+#include <QThreadPool>
 #include <QTimer>
 
 namespace {
@@ -66,6 +68,26 @@ bool isOnlyForPolling( const WatchedDirecotry& wd )
 {
     return wd.watchId < 0;
 }
+
+// Qt5/Qt6 compatibility: QThreadPool::start() only accepts QRunnable* in Qt5.
+// Qt6 added a start(std::function<void()>) overload. This adapter allows
+// lambda-based dispatch to work on both versions while preserving the
+// dedicated worker pool.
+class FunctionRunnable : public QRunnable {
+  public:
+    explicit FunctionRunnable( std::function<void()> fn )
+        : fn_( std::move( fn ) )
+    {
+        setAutoDelete( true );
+    }
+    void run() override
+    {
+        fn_();
+    }
+
+  private:
+    std::function<void()> fn_;
+};
 
 } // namespace
 
@@ -333,6 +355,8 @@ FileWatcher::FileWatcher()
     , throttler_{ new KDToolBox::KDSignalThrottler( this ) }
     , efswWatcher_{ new EfswFileWatcher( this ) }
 {
+    workerPool_.setMaxThreadCount( 1 );
+
     connect( checkTimer_, &QTimer::timeout, this, &FileWatcher::checkWatches );
 
     throttler_->setTimeout( 250 );
@@ -342,7 +366,12 @@ FileWatcher::FileWatcher()
              &FileWatcher::sendChangesNotifications );
 }
 
-FileWatcher::~FileWatcher() = default;
+FileWatcher::~FileWatcher()
+{
+    if ( !workerPool_.waitForDone( 5000 ) ) {
+        LOG_WARNING << "FileWatcher worker pool did not finish within 5s timeout";
+    }
+}
 
 FileWatcher& FileWatcher::getFileWatcher()
 {
@@ -353,13 +382,27 @@ FileWatcher& FileWatcher::getFileWatcher()
 void FileWatcher::addFile( const QString& fileName )
 {
     updateConfiguration();
-    efswWatcher_->addFile( fileName );
+    // Dispatch the efsw watch setup to a worker thread to keep the main
+    // thread responsive. On macOS, open() on TCC-protected directories
+    // (e.g. ~/Downloads, ~/Desktop, ~/Documents) blocks until the user
+    // responds to the system permission dialog.
+    // Uses a dedicated single-worker thread pool to avoid contention
+    // on the global QThreadPool.
+    auto* watcher = efswWatcher_.get();
+    workerPool_.start( new FunctionRunnable( [ watcher, fileName ]() {
+        watcher->addFile( fileName );
+    } ) );
 }
 
 void FileWatcher::removeFile( const QString& fileName )
 {
-    efswWatcher_->removeFile( fileName );
     updateConfiguration();
+    // Dispatch to the same dedicated worker pool so that removeFile is
+    // serialized with any in-progress addFile on the same worker thread.
+    auto* watcher = efswWatcher_.get();
+    workerPool_.start( new FunctionRunnable( [ watcher, fileName ]() {
+        watcher->removeFile( fileName );
+    } ) );
 }
 
 void FileWatcher::fileChangedOnDisk( const QString& fileName )

@@ -314,27 +314,36 @@ QStatusBar {
 }
 
 QTabWidget::pane {
-    border: 1px solid __BORDER__;
-    border-radius: 8px;
-    top: -1px;
+    border: 0px;
+    top: 0px;
     background-color: __BASE__;
+}
+QTabBar {
+    background-color: __ALT_BASE__;
+    border: 1px solid __BORDER__;
+    border-radius: 14px;
+    padding: 2px;
 }
 QTabBar::tab {
-    background-color: __ALT_BASE__;
-    padding: 4px 10px;
-    border: 1px solid __BORDER__;
-    border-bottom: none;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
-    margin-right: 4px;
-    min-height: 22px;
+    background-color: transparent;
+    padding: 3px 12px;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    margin: 2px 3px;
+    min-height: 20px;
 }
 QTabBar::tab:selected {
-    background-color: __BASE__;
+    background-color: __BUTTON_PRESSED__;
     color: __TEXT__;
+    border: 1px solid __BORDER__;
+    font-weight: 600;
 }
 QTabBar::tab:!selected {
     color: __MUTED__;
+}
+QTabBar::tab:hover:!selected {
+    background-color: __BUTTON_HOVER__;
+    color: __TEXT__;
 }
 QTabBar::close-button {
     image: url(__TAB_CLOSE__);
