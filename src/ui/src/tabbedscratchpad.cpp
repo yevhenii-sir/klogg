@@ -47,7 +47,9 @@ TabbedScratchPad::TabbedScratchPad( QWidget* parent )
 
     connect( addTabButton.get(), &QToolButton::clicked, [ this ]( auto ) { addTab(); } );
 
-    tabWidget_->addTab( new QLabel( "You can add tabs by pressing <b>\"+\"</b> or Ctrl+N" ),
+    const auto newTabShortcut = QKeySequence( QKeySequence::New ).toString( QKeySequence::NativeText );
+    tabWidget_->addTab( new QLabel( QStringLiteral( "You can add tabs by pressing <b>\"+\"</b> or %1" )
+                                        .arg( newTabShortcut ) ),
                         QString() );
     tabWidget_->setTabEnabled( 0, false );
 
@@ -78,7 +80,14 @@ void TabbedScratchPad::keyPressEvent( QKeyEvent* event )
 
     event->accept();
 
-    // Ctrl + tab
+#ifdef Q_OS_MACOS
+    constexpr auto PrimaryMod = Qt::MetaModifier;
+#else
+    constexpr auto PrimaryMod = Qt::ControlModifier;
+#endif
+
+    // Ctrl + tab (tab cycling keeps Ctrl on all platforms —
+    // Cmd+Tab is reserved for the system app switcher on macOS)
     if ( ( mod == Qt::ControlModifier && key == Qt::Key_Tab )
          || ( mod == Qt::ControlModifier && key == Qt::Key_PageDown )
          || ( mod == ( Qt::ControlModifier | Qt::AltModifier | Qt::KeypadModifier )
@@ -94,10 +103,14 @@ void TabbedScratchPad::keyPressEvent( QKeyEvent* event )
                                          ? tabWidget_->currentIndex() - 1
                                          : tabWidget_->count() - 1 );
     }
-    else if ( mod == Qt::ControlModifier && ( key == Qt::Key_N ) ) {
+    // Primary modifier + N: new scratchpad tab (Cmd+N on macOS, Ctrl+N elsewhere)
+    else if ( ( mod == PrimaryMod || mod == Qt::ControlModifier )
+              && key == Qt::Key_N ) {
         addTab();
     }
     else if ( mod == Qt::ControlModifier && ( key == Qt::Key_Q || key == Qt::Key_W ) ) {
+        // Ctrl+Q/W closes tab on all platforms (physical Ctrl only —
+        // Cmd+Q is reserved for Quit, Cmd+W is handled by CloseFile shortcut)
         tabWidget_->removeTab( tabWidget_->currentIndex() );
     }
     else {
