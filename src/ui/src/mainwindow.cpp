@@ -489,6 +489,10 @@ void MainWindow::reTranslateUI()
     generateDumpAction->setText( transAction( action::generateDumpText ) );
     generateDumpAction->setStatusTip( transAction( action::generateDumpStatusTip ) );
 
+    checkForNewVersionAction->setText( transAction( action::checkForNewVersionText ) );
+    checkForNewVersionAction->setStatusTip(
+        transAction( action::checkForNewVersionStatusTip ) );
+
     showScratchPadAction->setText( transAction( action::showScratchPadText ) );
     showScratchPadAction->setStatusTip( transAction( action::showScratchPadStatusTip ) );
 
@@ -761,6 +765,11 @@ void MainWindow::createActions()
     connect( generateDumpAction, &QAction::triggered, this,
              [ this ]( auto ) { this->generateDump(); } );
 
+    checkForNewVersionAction = new QAction( tr( action::checkForNewVersionText ), this );
+    checkForNewVersionAction->setStatusTip( tr( action::checkForNewVersionStatusTip ) );
+    connect( checkForNewVersionAction, &QAction::triggered, this,
+             [ this ]( auto ) { this->checkForNewVersion(); } );
+
     showScratchPadAction = new QAction( tr( action::showScratchPadText ), this );
     showScratchPadAction->setStatusTip( tr( action::showScratchPadStatusTip ) );
     connect( showScratchPadAction, &QAction::triggered, this,
@@ -988,6 +997,8 @@ void MainWindow::createMenus()
 
     helpMenu = menuBar()->addMenu( tr( menu::helpTitle ) );
     helpMenu->addAction( showDocumentationAction );
+    helpMenu->addSeparator();
+    helpMenu->addAction( checkForNewVersionAction );
     helpMenu->addSeparator();
     helpMenu->addAction( reportIssueAction );
     helpMenu->addSeparator();
@@ -1617,6 +1628,11 @@ void MainWindow::documentation()
     else {
         LOG_ERROR << "Can't open documentation resource";
     }
+}
+
+void MainWindow::checkForNewVersion()
+{
+    Q_EMIT checkForNewVersionRequested();
 }
 
 void MainWindow::showScratchPad()

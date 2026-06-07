@@ -41,19 +41,21 @@
 #include "log.h"
 
 #include "klogg_version.h"
+#include "dispatch_to.h"
+
+#include <QEventLoop>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QPointer>
+#include <QSysInfo>
+#include <QUrl>
+#include <QtConcurrent>
 
 namespace {
 
-#if defined( Q_OS_WIN )
-static constexpr QLatin1String OsSuffix = QLatin1String( "-win", 4 );
-#elif defined( Q_OS_MACOS )
-static constexpr QLatin1String OsSuffix = QLatin1String( "-osx", 4 );
-#else
-static constexpr QLatin1String OsSuffix = QLatin1String( "-linux", 6 );
-#endif
-
-const QLatin1String kReleaseFile
-    = QLatin1String( "https://raw.githubusercontent.com/ZEACENT/klogg/master/latest.json", 67 );
+const auto kReleaseApiUrl
+    = QLatin1String( "https://api.github.com/repos/ZEACENT/klogg/releases/latest", 58 );
 static constexpr std::time_t CHECK_INTERVAL_S = 3600 * 24 * 7; /* 7 days */
 
 bool isVersionNewer( const QString& current_version, const QString& new_version )
@@ -78,6 +80,67 @@ bool isVersionNewer( const QString& current_version, const QString& new_version 
     return next > old;
 }
 
+QString selectAssetDownloadUrl( const QVariantList& assets )
+{
+    if ( assets.isEmpty() ) {
+        return {};
+    }
+
+    // Platform-specific extension(s)
+#if defined( Q_OS_MAC )
+    const QStringList platformExtensions{ QStringLiteral( ".dmg" ) };
+#elif defined( Q_OS_WIN )
+    const QStringList platformExtensions{ QStringLiteral( ".exe" ), QStringLiteral( ".msi" ) };
+#else
+    const QStringList platformExtensions{ QStringLiteral( ".appimage" ), QStringLiteral( ".deb" ) };
+#endif
+
+    // Architecture aliases for the current CPU
+    const auto currentArch = QSysInfo::currentCpuArchitecture().toLower();
+    QStringList archAliases;
+    if ( currentArch == QStringLiteral( "arm64" ) || currentArch == QStringLiteral( "aarch64" ) ) {
+        archAliases = QStringList{ QStringLiteral( "arm64" ), QStringLiteral( "aarch64" ) };
+    }
+    else if ( currentArch == QStringLiteral( "x86_64" )
+              || currentArch == QStringLiteral( "amd64" ) ) {
+        archAliases
+            = QStringList{ QStringLiteral( "x86_64" ), QStringLiteral( "x64" ), QStringLiteral( "amd64" ) };
+    }
+    else {
+        archAliases = QStringList{ currentArch };
+    }
+
+    auto assetMatchesExt = [ & ]( const QVariantMap& asset ) {
+        const auto name = asset.value( QStringLiteral( "name" ) ).toString().toLower();
+        return std::any_of( platformExtensions.begin(), platformExtensions.end(),
+                            [ & ]( const QString& ext ) { return name.endsWith( ext ); } );
+    };
+
+    // Pass 1: exact arch + platform match
+    for ( const auto& a : assets ) {
+        const auto assetMap = a.toMap();
+        if ( !assetMatchesExt( assetMap ) ) {
+            continue;
+        }
+        const auto name = assetMap.value( QStringLiteral( "name" ) ).toString().toLower();
+        for ( const auto& alias : archAliases ) {
+            if ( name.contains( alias ) ) {
+                return assetMap.value( QStringLiteral( "browser_download_url" ) ).toString();
+            }
+        }
+    }
+
+    // Pass 2: platform match only (fallback for un-arch'd assets)
+    for ( const auto& a : assets ) {
+        const auto assetMap = a.toMap();
+        if ( assetMatchesExt( assetMap ) ) {
+            return assetMap.value( QStringLiteral( "browser_download_url" ) ).toString();
+        }
+    }
+
+    return {};
+}
+
 } // namespace
 
 void VersionCheckerConfig::retrieveFromStorage( QSettings& settings )
@@ -86,6 +149,8 @@ void VersionCheckerConfig::retrieveFromStorage( QSettings& settings )
 
     if ( settings.contains( "VersionChecker/nextDeadline" ) )
         next_deadline_ = settings.value( "VersionChecker/nextDeadline" ).toLongLong();
+    if ( settings.contains( "VersionChecker/ignoredVersion" ) )
+        ignored_version_ = settings.value( "VersionChecker/ignoredVersion" ).toString();
 }
 
 void VersionCheckerConfig::saveToStorage( QSettings& settings ) const
@@ -93,13 +158,12 @@ void VersionCheckerConfig::saveToStorage( QSettings& settings ) const
     LOG_DEBUG << "VersionCheckerConfig::saveToStorage";
 
     settings.setValue( "VersionChecker/nextDeadline", static_cast<long long>( next_deadline_ ) );
+    settings.setValue( "VersionChecker/ignoredVersion", ignored_version_ );
 }
 
 VersionChecker::VersionChecker()
     : QObject()
-    , manager_( new QNetworkAccessManager( this ) )
 {
-    manager_->setRedirectPolicy( QNetworkRequest::NoLessSafeRedirectPolicy );
 }
 
 void VersionChecker::startCheck()
@@ -109,82 +173,155 @@ void VersionChecker::startCheck()
     const auto& deadlineConfig = VersionCheckerConfig::getSynced();
     const auto& appConfig = Configuration::get();
 
-    if ( appConfig.versionCheckingEnabled() ) {
-        // Check the deadline has been reached
-        if ( deadlineConfig.nextDeadline() < std::time( nullptr ) ) {
-            connect( manager_, &QNetworkAccessManager::finished, this,
-                     &VersionChecker::downloadFinished );
+    if ( !appConfig.versionCheckingEnabled() ) {
+        return;
+    }
 
-            LOG_DEBUG << "Requesting new version info from " << kReleaseFile;
+    // Check the deadline has been reached
+    if ( deadlineConfig.nextDeadline() < std::time( nullptr ) ) {
+        LOG_DEBUG << "Requesting new version info from " << kReleaseApiUrl;
+
+        QPointer<VersionChecker> guard( this );
+        [[maybe_unused]] const auto versionCheckFuture = QtConcurrent::run( [ guard ] {
+            QNetworkAccessManager mgr;
+            mgr.setRedirectPolicy( QNetworkRequest::NoLessSafeRedirectPolicy );
 
             QNetworkRequest request;
-            request.setUrl( QUrl( kReleaseFile ) );
-            manager_->get( request );
-        }
-        else {
-            LOG_DEBUG << "Deadline not reached yet, next check in "
-                      << std::difftime( deadlineConfig.nextDeadline(), std::time( nullptr ) );
-        }
+            request.setUrl( QUrl( kReleaseApiUrl ) );
+
+            QNetworkReply* reply = mgr.get( request );
+
+            QEventLoop loop;
+            QObject::connect( reply, &QNetworkReply::finished, &loop, &QEventLoop::quit );
+            loop.exec();
+
+            const bool hadError = ( reply->error() != QNetworkReply::NoError );
+            const QByteArray data = hadError ? QByteArray() : reply->readAll();
+
+            if ( hadError ) {
+                LOG_WARNING << "Version check download failed: err " << reply->error();
+            }
+
+            reply->deleteLater();
+
+            dispatchToMainThread( [ guard, data, hadError ] {
+                if ( guard ) {
+                    guard->processResponse( data, hadError, false );
+                }
+            } );
+        } );
+    }
+    else {
+        LOG_DEBUG << "Deadline not reached yet, next check in "
+                  << std::difftime( deadlineConfig.nextDeadline(), std::time( nullptr ) );
     }
 }
 
-void VersionChecker::downloadFinished( QNetworkReply* reply )
+void VersionChecker::forceCheck()
 {
-    LOG_DEBUG << "VersionChecker::downloadFinished()";
+    LOG_DEBUG << "VersionChecker::forceCheck()";
 
-    if ( reply->error() == QNetworkReply::NoError ) {
-        const auto rawReply = reply->readAll();
-        checkVersionData( rawReply );
+    const auto& appConfig = Configuration::get();
+
+    if ( !appConfig.versionCheckingEnabled() ) {
+        LOG_DEBUG << "Version checking is disabled";
+        Q_EMIT checkCompleted( false );
+        return;
+    }
+
+    QPointer<VersionChecker> guard( this );
+    [[maybe_unused]] const auto versionCheckFuture = QtConcurrent::run( [ guard ] {
+        QNetworkAccessManager mgr;
+        mgr.setRedirectPolicy( QNetworkRequest::NoLessSafeRedirectPolicy );
+
+        QNetworkRequest request;
+        request.setUrl( QUrl( kReleaseApiUrl ) );
+
+        QNetworkReply* reply = mgr.get( request );
+
+        QEventLoop loop;
+        QObject::connect( reply, &QNetworkReply::finished, &loop, &QEventLoop::quit );
+        loop.exec();
+
+        const bool hadError = ( reply->error() != QNetworkReply::NoError );
+        const QByteArray data = hadError ? QByteArray() : reply->readAll();
+
+        if ( hadError ) {
+            LOG_WARNING << "Version check download failed: err " << reply->error();
+        }
+
+        reply->deleteLater();
+
+        dispatchToMainThread( [ guard, data, hadError ] {
+            if ( guard ) {
+                guard->processResponse( data, hadError, true );
+            }
+        } );
+    } );
+}
+
+void VersionChecker::processResponse( QByteArray data, bool hadError, bool wasManual )
+{
+    LOG_DEBUG << "VersionChecker::processResponse()";
+
+    if ( !hadError ) {
+        const bool foundNewer = checkVersionData( data );
+
+        if ( !foundNewer && wasManual ) {
+            Q_EMIT checkCompleted( false );
+        }
     }
     else {
-        LOG_WARNING << "Download failed: err " << reply->error();
+        if ( wasManual ) {
+            Q_EMIT checkCompleted( false );
+        }
     }
 
-    reply->deleteLater();
-
-    // Extend the deadline
+    // Extend the deadline, but only if no user-set reminder is still active
     auto& config = VersionCheckerConfig::get();
 
-    config.setNextDeadline( std::time( nullptr ) + CHECK_INTERVAL_S );
+    const auto now = std::time( nullptr );
+    if ( config.nextDeadline() <= now ) {
+        config.setNextDeadline( now + CHECK_INTERVAL_S );
+    }
 
     config.save();
 }
 
-void VersionChecker::checkVersionData( QByteArray versionData )
+bool VersionChecker::checkVersionData( QByteArray versionData )
 {
     LOG_DEBUG << "Version reply: " << QString::fromUtf8( versionData );
 
-    const auto latestJson = QJsonDocument::fromJson( versionData );
-    const auto latestVersionMap = latestJson.toVariant().toMap();
+    const auto releaseJson = QJsonDocument::fromJson( versionData );
+    const auto releaseMap = releaseJson.toVariant().toMap();
 
-    QString latestVersion;
-    QString url;
-    const auto stableVersions = latestVersionMap.value( "releases" ).toList();
+    // The /releases/latest endpoint returns the latest non-prerelease, non-draft release.
+    // tag_name is e.g. "v26.05.27.958" — strip the "v" prefix for version comparison.
+    auto latestVersion = releaseMap.value( "tag_name" ).toString();
+    if ( latestVersion.startsWith( QLatin1Char( 'v' ) ) ) {
+        latestVersion = latestVersion.mid( 1 );
+    }
+    const auto url = releaseMap.value( "html_url" ).toString();
+    const auto changelogBody = releaseMap.value( "body" ).toString();
+
+    // Parse assets for the platform + architecture matched download URL
+    const auto assetsList = releaseMap.value( "assets" ).toList();
+    const auto downloadUrl = selectAssetDownloadUrl( assetsList );
 
     const auto currentVersion = kloggVersion();
-    if ( std::any_of( stableVersions.begin(), stableVersions.end(),
-                      [ &currentVersion ]( const auto& version ) {
-                          return version.toString() == currentVersion;
-                      } ) ) {
-        latestVersion = latestVersionMap.value( "stable" ).toString();
-        url = latestVersionMap.value( "stable_url" ).toString();
-    }
-    else {
-        latestVersion = latestVersionMap.value( "ci" ).toString();
-        url = latestVersionMap.value( "ci_url" ).toString() + OsSuffix;
+
+    // Check if this version has been explicitly ignored
+    const auto& deadlineConfig = VersionCheckerConfig::getSynced();
+    if ( !deadlineConfig.ignoredVersion().isEmpty()
+         && latestVersion == deadlineConfig.ignoredVersion() ) {
+        LOG_DEBUG << "Version " << latestVersion << " is ignored, skipping notification";
+        return false;
     }
 
-    const auto changeLog = latestVersionMap.value( "changelog" ).toList();
-
+    // Use the release body as a single changelog entry
     QStringList changes;
-    for ( const auto& entry :  changeLog ) {
-        const auto entryData = entry.toMap();
-        const auto version = entryData.value( "version" ).toString();
-
-        if ( isVersionNewer( currentVersion, version ) ) {
-            changes
-                << QString( "%1: %2" ).arg( version, entryData.value( "description" ).toString() );
-        }
+    if ( !changelogBody.isEmpty() ) {
+        changes << changelogBody;
     }
 
     LOG_DEBUG << "Current version: " << currentVersion << ". Latest version is " << latestVersion
@@ -192,6 +329,8 @@ void VersionChecker::checkVersionData( QByteArray versionData )
     if ( isVersionNewer( currentVersion, latestVersion ) ) {
         LOG_INFO << "Sending new version notification";
 
-        Q_EMIT newVersionFound( latestVersion, url, changes );
+        Q_EMIT newVersionFound( latestVersion, url, downloadUrl, changes );
+        return true;
     }
+    return false;
 }
