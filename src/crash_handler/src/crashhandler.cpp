@@ -199,7 +199,19 @@ bool checkCrashpadReports( const QString& databasePath )
 
         QProcess stackProcess;
         stackProcess.start( stackwalker, QStringList() << reportFile );
-        stackProcess.waitForFinished();
+
+        // klogg_minidump_dump can hang on corrupted or very large minidumps.
+        // Use a bounded wait so the GUI can still appear.  If it times out,
+        // kill the process, delete the report from the pending queue so it
+        // isn't retried on every launch, and move on.
+        static constexpr int kMinidumpStackWalkTimeoutMs = 10000;
+        if ( !stackProcess.waitForFinished( kMinidumpStackWalkTimeoutMs ) ) {
+            LOG_WARNING << "minidump stack walk timed out for " << reportFile;
+            stackProcess.kill();
+            stackProcess.waitForFinished( 2000 );
+            database->DeleteReport( report.uuid );
+            continue;
+        }
 
         QString formattedReport = reportFile;
         formattedReport.append( QChar::LineFeed )
@@ -292,7 +304,7 @@ CrashHandler::CrashHandler()
         addExtra( "page_faults", pageFaults );
 #endif
     } );
-    memoryUsageTimer_->start( 10000 );
+    memoryUsageTimer_->start( 60000 );
 
     if ( needWaitForUpload ) {
         QProgressDialog progressDialog;
