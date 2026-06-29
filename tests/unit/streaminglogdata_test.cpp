@@ -323,6 +323,55 @@ TEST_CASE( "StreamingLogData can strip ANSI while saving current and future live
     REQUIRE( outputFile.readAll() == QByteArrayLiteral( "I/App first\nE/App second\n" ) );
 }
 
+TEST_CASE( "StreamingLogData clearCapture truncates display output file" )
+{
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    StreamingLogData logData( makeCaptureId(), tempDir.path() );
+    SafeQSignalSpy loadingSpy( &logData, SIGNAL( loadingFinished( LoadingStatus ) ) );
+
+    REQUIRE( loadingSpy.safeWait() );
+    loadingSpy.clear();
+
+    logData.appendUtf8( QByteArrayLiteral( "first line\n" ) );
+    REQUIRE( loadingSpy.safeWait() );
+
+    const auto outputPath = QDir( tempDir.path() ).filePath( QStringLiteral( "display.log" ) );
+    REQUIRE( logData.bindOutputFile( outputPath, LiveLogSaveAnsiMode::Strip ) );
+
+    // Output file now contains "first line\n"
+    QFile output1( outputPath );
+    REQUIRE( output1.open( QIODevice::ReadOnly ) );
+    REQUIRE( output1.readAll() == QByteArrayLiteral( "first line\n" ) );
+    output1.close();
+
+    // Simulate a reconnect: clearCapture reopens the display output file.
+    loadingSpy.clear();
+    logData.clearCapture();
+    REQUIRE( loadingSpy.safeWait() );
+
+    // After clearCapture, the output file should be truncated (empty),
+    // not still containing "first line\n".
+    QFile output2( outputPath );
+    REQUIRE( output2.open( QIODevice::ReadOnly ) );
+    const auto afterClear = output2.readAll();
+    output2.close();
+
+    // The file should be empty — clearCapture should have truncated it.
+    CHECK( afterClear.isEmpty() );
+
+    // New data after clear should be written cleanly (no old data prepended).
+    loadingSpy.clear();
+    logData.appendUtf8( QByteArrayLiteral( "second line\n" ) );
+    REQUIRE( loadingSpy.safeWait() );
+
+    QFile output3( outputPath );
+    REQUIRE( output3.open( QIODevice::ReadOnly ) );
+    REQUIRE( output3.readAll() == QByteArrayLiteral( "second line\n" ) );
+    output3.close();
+}
+
 TEST_CASE( "StreamingLogData can preserve ANSI while saving current and future live log lines" )
 {
     QTemporaryDir tempDir;
@@ -620,6 +669,82 @@ TEST_CASE( "Streaming live search uses pooled path for medium live update ranges
     REQUIRE( incrementalMatchers < incrementalOps * 4 );
 }
 
+TEST_CASE( "StreamingLogData setCaptureLimits trims data when limit is exceeded" )
+{
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    CaptureStore::Limits limits;
+    limits.segmentTargetBytes = 16;
+    limits.memoryBudgetBytes = 4096;
+    limits.rollingMaxFileSize = 16;
+    limits.rollingBackupCount = 3;
+
+    StreamingLogData logData( makeCaptureId(), tempDir.path() );
+    SafeQSignalSpy loadingSpy( &logData, SIGNAL( loadingFinished( LoadingStatus ) ) );
+    REQUIRE( loadingSpy.safeWait() );
+
+    logData.setCaptureLimits( limits );
+
+    loadingSpy.clear();
+    for ( int i = 0; i < 20; ++i ) {
+        logData.appendUtf8( QStringLiteral( "stream-%1\n" ).arg( i ).toUtf8() );
+    }
+    REQUIRE( loadingSpy.safeWait() );
+
+    // File size should be within limits
+    CHECK( logData.getFileSize() <= limits.rollingMaxFileSize * limits.rollingBackupCount );
+
+    // Lines should still be readable
+    const auto lineCount = logData.getNbLine();
+    CHECK( lineCount.get() > 0 );
+    REQUIRE( logData.getLineString( LineNumber( lineCount.get() - 1 ) )
+             == QStringLiteral( "stream-19" ) );
+}
+
+TEST_CASE( "StreamingLogData trim emits Truncated signal and invalidates caches" )
+{
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    CaptureStore::Limits limits;
+    limits.segmentTargetBytes = 16;
+    limits.memoryBudgetBytes = 4096;
+    limits.rollingMaxFileSize = 16;
+    limits.rollingBackupCount = 3;
+
+    StreamingLogData logData( makeCaptureId(), tempDir.path() );
+    SafeQSignalSpy loadingSpy( &logData, SIGNAL( loadingFinished( LoadingStatus ) ) );
+    REQUIRE( loadingSpy.safeWait() );
+
+    logData.setCaptureLimits( limits );
+
+    loadingSpy.clear();
+    SafeQSignalSpy fileSpy( &logData, SIGNAL( fileChanged( MonitoredFileStatus ) ) );
+
+    for ( int i = 0; i < 20; ++i ) {
+        logData.appendUtf8( QStringLiteral( "data-%1\n" ).arg( i ).toUtf8() );
+    }
+    REQUIRE( loadingSpy.safeWait() );
+
+    // At least one Truncated signal should have been emitted
+    bool sawTruncated = false;
+    for ( int i = 0; i < fileSpy.count(); ++i ) {
+        if ( fileSpy.at( i ).at( 0 ).value<MonitoredFileStatus>() == MonitoredFileStatus::Truncated ) {
+            sawTruncated = true;
+            break;
+        }
+    }
+    REQUIRE( sawTruncated );
+
+    // The search cache should work correctly after trim
+    const auto rawLines = logData.getLinesRaw( 0_lnum, logData.getNbLine() );
+    REQUIRE( rawLines.endOfLines.size() == static_cast<size_t>( logData.getNbLine().get() ) );
+
+    const auto decoded = rawLines.decodeLines();
+    REQUIRE( decoded.back() == QStringLiteral( "data-19" ) );
+}
+
 TEST_CASE( "Streaming live search coalesces medium updates before starting operations" )
 {
     QTemporaryDir tempDir;
@@ -665,4 +790,56 @@ TEST_CASE( "Streaming live search coalesces medium updates before starting opera
 
     REQUIRE( incrementalOps < 4 );
     REQUIRE( coalescedUpdates > 0 );
+}
+
+TEST_CASE( "StreamingLogData finishInput emits Truncated on single-line rotation trim",
+           "[streaming]" )
+{
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    CaptureStore::Limits limits;
+    limits.segmentTargetBytes = 16;
+    limits.memoryBudgetBytes = 4096;
+    limits.rollingMaxFileSize = 16;
+    limits.rollingBackupCount = 2;
+
+    StreamingLogData logData( makeCaptureId(), tempDir.path() );
+    SafeQSignalSpy loadingSpy( &logData, SIGNAL( loadingFinished( LoadingStatus ) ) );
+    REQUIRE( loadingSpy.safeWait() );
+
+    logData.setCaptureLimits( limits );
+
+    // Preserve mode routes output through CaptureStore, so finishInput()'s
+    // commitLine() -> appendOutputBytes() path can rotate and trim. appendUtf8()
+    // already handles this; finishInput() previously did not.
+    const auto outPath = QDir( tempDir.path() ).filePath( "out.log" );
+    REQUIRE( logData.bindOutputFile( outPath, LiveLogSaveAnsiMode::Preserve ) );
+
+    SafeQSignalSpy fileSpy( &logData, SIGNAL( fileChanged( MonitoredFileStatus ) ) );
+
+    // Partial lines (no trailing newline) committed via finishInput, forcing
+    // many rotations through the single-line commit path.
+    for ( int i = 0; i < 30; ++i ) {
+        logData.appendUtf8( QStringLiteral( "data-%1" ).arg( i ).toUtf8() );
+        logData.finishInput();
+    }
+    REQUIRE( loadingSpy.safeWait() );
+
+    bool sawTruncated = false;
+    for ( int i = 0; i < fileSpy.count(); ++i ) {
+        if ( fileSpy.at( i ).at( 0 ).value<MonitoredFileStatus>()
+             == MonitoredFileStatus::Truncated ) {
+            sawTruncated = true;
+            break;
+        }
+    }
+    REQUIRE( sawTruncated );
+
+    // Guard: the store must stay readable (tail line resolvable) after
+    // finishInput-driven trims.
+    REQUIRE( logData.getNbLine().get() > 0 );
+    const auto tail = logData.getNbLine().get() - 1;
+    const auto tailLine = logData.getLinesRaw( LineNumber( tail ), 1_lcount );
+    REQUIRE( tailLine.endOfLines.size() == 1 );
 }

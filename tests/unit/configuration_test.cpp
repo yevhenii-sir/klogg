@@ -149,6 +149,71 @@ TEST_CASE( "Configuration stores and restores iOS log defaults" )
     REQUIRE( restoredConfig.adbLogcatAnsiOutputEnabled() );
 }
 
+TEST_CASE( "Configuration defaults auto-reconnect to disabled" )
+{
+    Configuration config;
+
+    REQUIRE_FALSE( config.liveAutoReconnectEnabled() );
+}
+
+TEST_CASE( "Configuration stores and restores auto-reconnect settings" )
+{
+    const auto dirPath = makeTestDir( "configuration_reconnect" );
+    REQUIRE( QDir{ dirPath }.exists() );
+    const auto settingsPath = QDir{ dirPath }.filePath( "configuration-reconnect.ini" );
+
+    {
+        QSettings settings( settingsPath, QSettings::IniFormat );
+
+        Configuration config;
+        config.setLiveAutoReconnectEnabled( true );
+        config.setLiveAutoReconnectMaxAttempts( 5 );
+        config.saveToStorage( settings );
+        settings.sync();
+        REQUIRE( settings.status() == QSettings::NoError );
+    }
+
+    QSettings restoredSettings( settingsPath, QSettings::IniFormat );
+    Configuration restoredConfig;
+    restoredConfig.retrieveFromStorage( restoredSettings );
+
+    REQUIRE( restoredConfig.liveAutoReconnectEnabled() );
+    REQUIRE( restoredConfig.liveAutoReconnectMaxAttempts() == 5 );
+}
+
+TEST_CASE( "Configuration defaults max capture file size to 1000 MB" )
+{
+    Configuration config;
+
+    // 1000 MB in bytes
+    REQUIRE( config.liveCaptureRollingMaxFileSize() == 1000LL * 1024 * 1024 );
+}
+
+TEST_CASE( "Configuration stores and restores capture rolling settings" )
+{
+    const auto dirPath = makeTestDir( "configuration_capture" );
+    REQUIRE( QDir{ dirPath }.exists() );
+    const auto settingsPath = QDir{ dirPath }.filePath( "configuration-capture.ini" );
+
+    {
+        QSettings settings( settingsPath, QSettings::IniFormat );
+
+        Configuration config;
+        config.setLiveCaptureRollingMaxFileSize( 500LL * 1024 * 1024 );
+        config.setLiveCaptureRollingBackupCount( 3 );
+        config.saveToStorage( settings );
+        settings.sync();
+        REQUIRE( settings.status() == QSettings::NoError );
+    }
+
+    QSettings restoredSettings( settingsPath, QSettings::IniFormat );
+    Configuration restoredConfig;
+    restoredConfig.retrieveFromStorage( restoredSettings );
+
+    REQUIRE( restoredConfig.liveCaptureRollingMaxFileSize() == 500LL * 1024 * 1024 );
+    REQUIRE( restoredConfig.liveCaptureRollingBackupCount() == 3 );
+}
+
 TEST_CASE( "Configuration defaults empty filters to show all lines in filtered view" )
 {
     Configuration config;
@@ -177,4 +242,29 @@ TEST_CASE( "Configuration stores and restores empty-filter filtered-view behavio
     restoredConfig.retrieveFromStorage( restoredSettings );
 
     REQUIRE_FALSE( restoredConfig.showAllInFilteredViewWhenSearchEmpty() );
+}
+
+TEST_CASE( "Configuration live-capture rolling size MB view does not truncate sub-MB values",
+           "[configuration]" )
+{
+    Configuration config;
+
+    // A sub-megabyte byte value must round up to 1 MB, not truncate to 0
+    // (which the live-source dialog treats as "unlimited").
+    config.setLiveCaptureRollingMaxFileSize( 512LL * 1024 );
+    REQUIRE( config.liveCaptureRollingMaxFileSizeMb() == 1 );
+
+    // A value just under half a megabyte rounds down to 0 (legitimately
+    // "unlimited"); exactly half rounds up.
+    config.setLiveCaptureRollingMaxFileSize( 400LL * 1024 );
+    REQUIRE( config.liveCaptureRollingMaxFileSizeMb() == 0 );
+
+    // Whole-megabyte values round-trip exactly through the MB helpers.
+    config.setLiveCaptureRollingMaxFileSizeMb( 250 );
+    REQUIRE( config.liveCaptureRollingMaxFileSize() == 250LL * 1024 * 1024 );
+    REQUIRE( config.liveCaptureRollingMaxFileSizeMb() == 250 );
+
+    // 0 bytes stays 0 MB.
+    config.setLiveCaptureRollingMaxFileSize( 0 );
+    REQUIRE( config.liveCaptureRollingMaxFileSizeMb() == 0 );
 }

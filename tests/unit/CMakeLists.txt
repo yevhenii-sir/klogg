@@ -23,6 +23,10 @@ add_executable(klogg_tests
     tabbedcrawlerwidget_test.cpp
     filewatcher_test.cpp
     versionchecker_test.cpp
+    newversiondialog_test.cpp
+    updatedownload_test.cpp
+    live_save_split_test.cpp
+    live_save_crash_repro_test.cpp
     tests_main.cpp
 )
 

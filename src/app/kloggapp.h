@@ -54,7 +54,6 @@
 
 #include "configuration.h"
 #include "crashhandler.h"
-#include "downloader.h"
 #include "klogg_version.h"
 #include "log.h"
 #include "session.h"
@@ -64,6 +63,8 @@
 
 #include "mainwindow.h"
 #include "messagereceiver.h"
+#include "newversiondialog.h"
+#include "updatedownloadhelper.h"
 #include "versionchecker.h"
 
 class KloggApp : public QApplication {
@@ -122,6 +123,11 @@ class KloggApp : public QApplication {
                                  tr( "You are using the latest version of klogg." ) );
                          }
                          msgBox.exec();
+
+                         // Drain stale Cocoa events while the dialog's NSWindow
+                         // is still alive.  See newVersionNotification() for the
+                         // full explanation of the macOS Cocoa lifecycle issue.
+                         QCoreApplication::processEvents();
                      } );
         }
     }
@@ -322,36 +328,16 @@ class KloggApp : public QApplication {
         LOG_DEBUG << "newVersionNotification( " << new_version << " from " << url
                   << ", download: " << downloadUrl << " )";
 
-        QString message = tr( "<p>A new version of klogg (%1) is available for download.</p>"
-                              "<p><a href=\"%2\">%2</a></p>" )
-                              .arg( new_version, url );
+        NewVersionDialog dlg( new_version, url, changes );
+        dlg.exec();
 
-        if ( !changes.empty() ) {
-            message.append( tr( "<p>Important changes:</p><ul>" ) );
-            for ( const auto& change : changes ) {
-                message.append( tr( "<li>%1</li>" ).arg( change ) );
-            }
-            message.append( QStringLiteral( "</ul>" ) );
-        }
+        // Drain stale Cocoa events while the dialog's NSWindow is still alive.
+        // Without this, the destructor releases the NSWindow but orphaned events
+        // remain in the queue; the next processEvents() cycle in the main event
+        // loop tries to dispatch them to the dead window → ObjC exception → SIGABRT.
+        QCoreApplication::processEvents();
 
-        QMessageBox msgBox;
-        msgBox.setWindowTitle( tr( "New Version Available" ) );
-        msgBox.setText( message );
-        msgBox.setTextFormat( Qt::RichText );
-        msgBox.setIcon( QMessageBox::Information );
-
-        QPushButton* downloadButton
-            = msgBox.addButton( tr( "Download" ), QMessageBox::AcceptRole );
-        QPushButton* remindButton
-            = msgBox.addButton( tr( "Remind Later" ), QMessageBox::RejectRole );
-        QPushButton* skipButton
-            = msgBox.addButton( tr( "Skip This Version" ),
-                                QMessageBox::DestructiveRole );
-
-        msgBox.setDefaultButton( downloadButton );
-        msgBox.exec();
-
-        if ( msgBox.clickedButton() == downloadButton ) {
+        if ( dlg.clickedButton() == NewVersionDialog::Download ) {
             if ( !downloadUrl.isEmpty() ) {
                 downloadAndOpenUpdate( downloadUrl, new_version );
             }
@@ -360,13 +346,13 @@ class KloggApp : public QApplication {
                 QDesktopServices::openUrl( QUrl( url ) );
             }
         }
-        else if ( msgBox.clickedButton() == remindButton ) {
+        else if ( dlg.clickedButton() == NewVersionDialog::RemindLater ) {
             // Set deadline to 1 day from now
             auto& config = VersionCheckerConfig::get();
             config.setNextDeadline( std::time( nullptr ) + 86400 ); // 24 hours
             config.save();
         }
-        else if ( msgBox.clickedButton() == skipButton ) {
+        else if ( dlg.clickedButton() == NewVersionDialog::SkipVersion ) {
             // Store the version to ignore
             auto& config = VersionCheckerConfig::get();
             config.setIgnoredVersion( new_version );
@@ -384,40 +370,48 @@ class KloggApp : public QApplication {
         const auto urlFileName = QUrl( downloadUrl ).fileName();
         const auto localPath = downloadsPath + QDir::separator() + urlFileName;
 
-        // outputFile is shared with the completion lambda so it stays alive
-        // until the download finishes (no cycle — QFile is not a QObject).
-        auto outputFile = std::make_shared<QFile>( localPath );
-        if ( !outputFile->open( QIODevice::WriteOnly ) ) {
+        QFile outputFile( localPath );
+        if ( !outputFile.open( QIODevice::WriteOnly ) ) {
             LOG_ERROR << "Cannot open file for writing: " << localPath;
             QMessageBox::warning( nullptr, tr( "Download Failed" ),
                                   tr( "Could not create file:\n%1" ).arg( localPath ) );
             return;
         }
 
-        // Use raw new + deleteLater to avoid the shared_ptr cycle that would
-        // leak, while keeping the Downloader alive for the async request.
-        auto* downloader = new Downloader();
+        // Stack-allocated objects — same safe pattern as
+        // MainWindow::openRemoteFile().  Deterministic LIFO destruction
+        // avoids the macOS Cocoa crash caused by processEvents() +
+        // delete after a modal dialog exec().
+        Downloader downloader;
+        QProgressDialog progressDialog;
 
-        QObject::connect( downloader, &Downloader::finished,
-                          [ outputFile, downloader, localPath ]( bool success ) {
-                              outputFile->close();
-                              if ( success ) {
-                                  LOG_INFO << "Update downloaded to " << localPath;
-                                  QDesktopServices::openUrl( QUrl::fromLocalFile( localPath ) );
-                              }
-                              else {
-                                  LOG_ERROR << "Update download failed: "
-                                            << downloader->lastError();
-                                  QMessageBox::warning(
-                                      nullptr, tr( "Download Failed" ),
-                                      tr( "Failed to download update:\n%1" )
-                                          .arg( downloader->lastError() ) );
-                                  outputFile->remove();
-                              }
-                              downloader->deleteLater();
-                          } );
+        startUpdateDownload( QUrl( downloadUrl ), &outputFile, downloader, progressDialog );
 
-        downloader->download( QUrl( downloadUrl ), outputFile.get() );
+        const auto result = progressDialog.exec();
+
+        // Drain stale Cocoa events while the dialog's NSWindow is still alive.
+        // See comment in newVersionNotification() for the full explanation.
+        QCoreApplication::processEvents();
+
+        if ( result == QDialog::Accepted ) {
+            LOG_INFO << "Update downloaded to " << localPath;
+            outputFile.close();
+            QDesktopServices::openUrl( QUrl::fromLocalFile( localPath ) );
+        }
+        else {
+            const auto error = progressDialog.property( "downloadError" ).toString();
+            if ( !error.isEmpty() ) {
+                LOG_ERROR << "Update download failed: " << error;
+                QMessageBox::warning( nullptr, tr( "Download Failed" ),
+                                      tr( "Download failed:\n%1" ).arg( error ) );
+            }
+            else {
+                LOG_INFO << "Update download canceled by user";
+            }
+            // Closes our handle before removing: Windows refuses to delete an
+            // open file, so removing first silently leaked the partial download.
+            discardDownloadedFile( outputFile );
+        }
     }
 
     size_t nextWindowIndex() const

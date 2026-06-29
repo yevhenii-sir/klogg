@@ -462,6 +462,59 @@ class Configuration final : public Persistable<Configuration> {
         iosLogAnsiOutputEnabled_ = enabled;
     }
 
+    bool liveAutoReconnectEnabled() const
+    {
+        return liveAutoReconnectEnabled_;
+    }
+    void setLiveAutoReconnectEnabled( bool enabled )
+    {
+        liveAutoReconnectEnabled_ = enabled;
+    }
+
+    int liveAutoReconnectMaxAttempts() const
+    {
+        return liveAutoReconnectMaxAttempts_;
+    }
+    void setLiveAutoReconnectMaxAttempts( int maxAttempts )
+    {
+        liveAutoReconnectMaxAttempts_ = maxAttempts;
+    }
+
+    qint64 liveCaptureRollingMaxFileSize() const
+    {
+        return liveCaptureRollingMaxFileSize_;
+    }
+    void setLiveCaptureRollingMaxFileSize( qint64 maxFileSize )
+    {
+        liveCaptureRollingMaxFileSize_ = maxFileSize;
+    }
+
+    // Whole-megabyte view used by the live-source dialogs' spinboxes. Converting
+    // bytes->MB rounds to the nearest megabyte so a sub-megabyte stored value
+    // (e.g. migrated from an older format, or hand-edited) is not silently
+    // truncated to 0 (which the UI treats as "unlimited").
+    static constexpr qint64 LiveCaptureRollingBytesPerMb = 1024LL * 1024;
+    int liveCaptureRollingMaxFileSizeMb() const
+    {
+        const qint64 mb = ( liveCaptureRollingMaxFileSize_ + LiveCaptureRollingBytesPerMb / 2 )
+                          / LiveCaptureRollingBytesPerMb;
+        return static_cast<int>( qMin( mb, static_cast<qint64>( 2000000000LL ) ) );
+    }
+    void setLiveCaptureRollingMaxFileSizeMb( int megabytes )
+    {
+        liveCaptureRollingMaxFileSize_
+            = static_cast<qint64>( megabytes ) * LiveCaptureRollingBytesPerMb;
+    }
+
+    int liveCaptureRollingBackupCount() const
+    {
+        return liveCaptureRollingBackupCount_;
+    }
+    void setLiveCaptureRollingBackupCount( int backupCount )
+    {
+        liveCaptureRollingBackupCount_ = backupCount;
+    }
+
     bool forceFontAntialiasing() const
     {
         return forceFontAntialiasing_;
@@ -710,6 +763,27 @@ class Configuration final : public Persistable<Configuration> {
     QString iosLogExecutable_;
     QString iosLogExtraArgs_;
     bool iosLogAnsiOutputEnabled_ = true;
+
+    // Whether to automatically attempt reconnection when a live source
+    // (ADB logcat, iOS log stream) unexpectedly disconnects or encounters
+    // an error. When enabled, klogg uses exponential backoff starting at
+    // 1 second and capping at 30 seconds between attempts.
+    bool liveAutoReconnectEnabled_ = false;
+    // Maximum number of automatic reconnection attempts before giving up.
+    // Set to 0 for unlimited retries. Each retry waits longer: the delay
+    // doubles with each attempt (1s, 2s, 4s, 8s, ... up to 30s).
+    int liveAutoReconnectMaxAttempts_ = 0; // 0 = unlimited
+    // Maximum size in bytes of each rolling capture file. When the live
+    // capture output file exceeds this size, it is rotated (renamed as a
+    // numbered backup) and a new file is started. Old backups beyond
+    // liveCaptureRollingBackupCount_ are deleted. Set to 0 to disable
+    // size-based rolling (single unlimited file).
+    qint64 liveCaptureRollingMaxFileSize_ = 1000LL * 1024 * 1024; // 1000 MB
+    // Number of old capture backup files to retain when rolling by file
+    // size. Files beyond this count are deleted (oldest first). Set to 0
+    // to keep all rotated files indefinitely (no cleanup). Effective
+    // only when liveCaptureRollingMaxFileSize_ is also > 0.
+    int liveCaptureRollingBackupCount_ = 0; // 0 = keep all rotated files
 
     bool forceFontAntialiasing_ = false;
     bool enableQtHighDpi_ = true;

@@ -1177,7 +1177,16 @@ void MainWindow::openRemoteFile( const QUrl& url )
     auto tempFile = new QTemporaryFile( tempDir_.filePath( url.fileName() ), this );
     if ( tempFile->open() ) {
         downloader.download( url, tempFile );
-        if ( !progressDialog.exec() ) {
+        const auto downloadResult = progressDialog.exec();
+
+        // Drain stale Cocoa events while the dialog's NSWindow is still alive.
+        // On macOS, a parentless QProgressDialog gets its own NSWindow.  After
+        // exec() returns, orphaned Cocoa events may remain in the queue.  If the
+        // dialog is destroyed before those events are drained, the main event
+        // loop will try to dispatch them to the dead window → SIGABRT.
+        QCoreApplication::processEvents();
+
+        if ( !downloadResult ) {
             loadFile( tempFile->fileName() );
         }
         else {
@@ -2153,6 +2162,11 @@ bool MainWindow::extractAndLoadFile( const QString& fileName )
     progressDialog.setLabelText( tr( "Extracting %1" ).arg( fileName ) );
     progressDialog.setRange( 0, 0 );
 
+    // Note: this progressDialog is parentless.  After each exec() call below,
+    // QCoreApplication::processEvents() must be called to drain stale Cocoa
+    // events while the NSWindow is still alive.  See openRemoteFile() for the
+    // full explanation of the macOS Cocoa lifecycle issue.
+
     connect( &decompressor, &Decompressor::finished,
              [ &progressDialog ]( bool isOk ) { progressDialog.done( isOk ? 0 : 1 ); } );
     connect( &progressDialog, &QProgressDialog::canceled,
@@ -2166,8 +2180,15 @@ bool MainWindow::extractAndLoadFile( const QString& fileName )
         auto tempFile = new QTemporaryFile(
             this->tempDir_.filePath( QFileInfo( fileName ).fileName() ), this );
 
-        if ( tempFile->open() && decompressor.decompress( fileName, tempFile, decompressInterrupt )
-             && !progressDialog.exec() ) {
+        const bool decompressOk = tempFile->open()
+                                  && decompressor.decompress( fileName, tempFile,
+                                                              decompressInterrupt );
+        const bool decompressAccepted = decompressOk && !progressDialog.exec();
+
+        // Drain stale Cocoa events while the dialog's NSWindow is still alive.
+        QCoreApplication::processEvents();
+
+        if ( decompressAccepted ) {
 
             if ( decompressInterrupt ) {
                 return false;
@@ -2184,8 +2205,15 @@ bool MainWindow::extractAndLoadFile( const QString& fileName )
     else if ( decompressAction == DecompressAction::Extract ) {
         QTemporaryDir archiveDir{ this->tempDir_.filePath( QFileInfo( fileName ).fileName() ) };
         archiveDir.setAutoRemove( false );
-        if ( decompressor.extract( fileName, archiveDir.path(), decompressInterrupt )
-             && !progressDialog.exec() ) {
+
+        const bool extractOk
+            = decompressor.extract( fileName, archiveDir.path(), decompressInterrupt );
+        const bool extractAccepted = extractOk && !progressDialog.exec();
+
+        // Drain stale Cocoa events while the dialog's NSWindow is still alive.
+        QCoreApplication::processEvents();
+
+        if ( extractAccepted ) {
 
             if ( decompressInterrupt ) {
                 return false;
@@ -2393,9 +2421,17 @@ void MainWindow::updateLiveTabAppearance( CrawlerWidget* crawler )
         const auto state = source->state();
         LiveTabStatus liveStatus = LiveTabStatus::Connected;
         if ( state == AdbLogcatSource::State::Error ) {
-            liveStatus = LiveTabStatus::Error;
-            if ( !source->lastError().isEmpty() ) {
-                toolTip = tr( "%1\nError: %2" ).arg( baseTip, source->lastError() );
+            if ( source->isAutoReconnectActive() ) {
+                liveStatus = LiveTabStatus::Reconnecting;
+                toolTip = tr( "%1\nReconnecting... (attempt %2)" )
+                              .arg( baseTip )
+                              .arg( source->reconnectAttempt() + 1 );
+            }
+            else {
+                liveStatus = LiveTabStatus::Error;
+                if ( !source->lastError().isEmpty() ) {
+                    toolTip = tr( "%1\nError: %2" ).arg( baseTip, source->lastError() );
+                }
             }
         }
         else if ( state == AdbLogcatSource::State::Disconnected ) {
@@ -2418,6 +2454,14 @@ void MainWindow::registerAdbLogcatSource( CrawlerWidget* crawler )
         return;
     }
 
+    // Apply auto-reconnect and capture limit configuration from session data
+    // (populated by the open dialog or session restore).
+    const auto& sessionData = adbSource->sessionData();
+    adbSource->setAutoReconnectEnabled( sessionData.autoReconnectEnabled );
+    adbSource->setAutoReconnectMaxAttempts( sessionData.maxReconnectAttempts );
+    adbSource->setCaptureLimits( sessionData.captureMaxFileSize,
+                                 sessionData.captureBackupCount );
+
     connect( adbSource, &AdbLogcatSource::stateChanged, this,
              [ this, crawler ]( AdbLogcatSource::State ) {
                  if ( currentCrawlerWidget() == crawler ) {
@@ -2434,6 +2478,8 @@ void MainWindow::registerAdbLogcatSource( CrawlerWidget* crawler )
                  }
                  updateLiveTabAppearance( crawler );
              } );
+    connect( adbSource, &AdbLogcatSource::reconnectAttemptStarted, this,
+             [ this, crawler ]( int ) { updateLiveTabAppearance( crawler ); } );
 
     // Sync tab appearance immediately in case the source is already
     // in Error or Disconnected state (e.g. during session restore).
@@ -2518,7 +2564,7 @@ void MainWindow::updateMenuBarFromDocument( const CrawlerWidget* crawler )
     const auto sourceState
         = adbSource ? adbSource->state() : AdbLogcatSource::State::Disconnected;
     disconnectSourceAction->setEnabled( isLiveDocument
-                                        && sourceState == AdbLogcatSource::State::Connected );
+                                        && sourceState != AdbLogcatSource::State::Disconnected );
     reconnectSourceAction->setEnabled( isLiveDocument
                                        && sourceState != AdbLogcatSource::State::Connected );
 }

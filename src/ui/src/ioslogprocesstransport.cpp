@@ -1,132 +1,14 @@
 #include "ioslogprocesstransport.h"
 #include "commandargumenttokenizer.h"
 #include "iosdeviceparser.h"
-
-#include <QDir>
-#include <QFileInfo>
-#include <QProcess>
-#include <QStandardPaths>
+#include "iosdevicelistprovider.h"
+#include "log.h"
 
 #include <utility>
 
 namespace {
 
 using ui::internal::splitCommandArguments;
-using ui::internal::expandTildePath;
-
-#ifdef Q_OS_MAC
-QStringList knownExecutableCandidatePaths( const QString& executable )
-{
-    QStringList candidates{
-        QDir::cleanPath( QStringLiteral( "/opt/homebrew/bin/" ) + executable ),
-        QDir::cleanPath( QStringLiteral( "/usr/local/bin/" ) + executable ),
-    };
-
-    const auto homeDir = QStandardPaths::writableLocation( QStandardPaths::HomeLocation );
-    if ( !homeDir.isEmpty() ) {
-        const auto pythonRoot = QDir( homeDir + QStringLiteral( "/Library/Python" ) );
-        const auto versionDirs = pythonRoot.entryList( QDir::Dirs | QDir::NoDotAndDotDot );
-        for ( const auto& version : versionDirs ) {
-            candidates.append(
-                QDir::cleanPath( pythonRoot.absoluteFilePath( version + QStringLiteral( "/bin/" ) + executable ) ) );
-        }
-    }
-
-    return candidates;
-}
-#endif
-
-QString findExecutableAtKnownLocation( const QString& executable )
-{
-#ifdef Q_OS_MAC
-    const auto candidates = knownExecutableCandidatePaths( executable );
-    for ( const auto& candidate : candidates ) {
-        const QFileInfo info( candidate );
-        if ( info.exists() && info.isFile() && info.isExecutable() ) {
-            return info.absoluteFilePath();
-        }
-    }
-
-    const auto fromPath = QStandardPaths::findExecutable( executable );
-    if ( !fromPath.isEmpty() ) {
-        return fromPath;
-    }
-#else
-    Q_UNUSED( executable );
-#endif
-
-    return {};
-}
-
-QString normalizedIosSyslogExecutable( const QString& executable )
-{
-    const auto expanded = expandTildePath( executable.trimmed() );
-    if ( !expanded.isEmpty() ) {
-        return expanded;
-    }
-
-    const auto detected = findExecutableAtKnownLocation( QStringLiteral( "pymobiledevice3" ) );
-    if ( !detected.isEmpty() ) {
-        return detected;
-    }
-
-    return QStringLiteral( "pymobiledevice3" );
-}
-
-#ifdef Q_OS_MAC
-bool waitForFinishedOrKill( QProcess& process, int timeoutMs )
-{
-    if ( process.waitForFinished( timeoutMs ) ) {
-        return true;
-    }
-
-    process.kill();
-    process.waitForFinished( 1500 );
-    return false;
-}
-
-bool runPymobiledeviceListCommand( const QString& executable, const QStringList& arguments,
-                                   QList<IosDeviceInfo>* devices, QString* error )
-{
-    QProcess process;
-    process.start( executable, arguments );
-    if ( !process.waitForStarted( 3000 ) ) {
-        if ( error ) {
-            *error = process.errorString();
-        }
-        return false;
-    }
-
-    if ( !waitForFinishedOrKill( process, 5000 ) ) {
-        if ( error ) {
-            *error = QObject::tr( "Timed out waiting for iOS device list output" );
-        }
-        return false;
-    }
-
-    const auto stdOut = process.readAllStandardOutput();
-    if ( process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0 ) {
-        if ( error ) {
-            const auto stdErr = QString::fromUtf8( process.readAllStandardError() ).trimmed();
-            *error = stdErr.isEmpty() ? process.errorString() : stdErr;
-        }
-        return false;
-    }
-
-    *devices = parsePymobiledeviceSimpleDeviceList( stdOut );
-    return true;
-}
-
-QStringList pymobiledeviceSimpleListArguments()
-{
-    return { QStringLiteral( "usbmux" ), QStringLiteral( "list" ), QStringLiteral( "--simple" ) };
-}
-
-QStringList pymobiledeviceLegacyListArguments()
-{
-    return { QStringLiteral( "usbmux" ), QStringLiteral( "list" ) };
-}
-#endif
 
 QStringList pymobiledeviceStreamingArguments( const QString& deviceUdid )
 {
@@ -152,51 +34,25 @@ IosLogProcessTransport::IosLogProcessTransport( QString executable, QString devi
     , deviceUdid_( std::move( deviceUdid ) )
     , extraArgs_( std::move( extraArgs ) )
     , ansiOutputEnabled_( ansiOutputEnabled )
+    , deviceProvider_( std::make_unique<IosDeviceListProvider>( executable_, this ) )
 {
 }
 
 QList<IosDeviceInfo> IosLogProcessTransport::listDevices( const QString& executable,
                                                           QString* error )
 {
-#ifndef Q_OS_MAC
-    Q_UNUSED( executable );
-    if ( error ) {
-        *error = QObject::tr( "iOS log streaming is supported only on macOS." );
-    }
-    return {};
-#else
-    QList<IosDeviceInfo> devices;
-    const auto pymobiledeviceExecutable = normalizedIosSyslogExecutable( executable );
-    // Try the full JSON output first — it includes DeviceName, ProductType,
-    // ProductVersion, etc.  Fall back to --simple (UDID-only) only if the
-    // full listing is not supported by the installed pymobiledevice3 version.
-    if ( !runPymobiledeviceListCommand( pymobiledeviceExecutable, pymobiledeviceLegacyListArguments(),
-                                        &devices, error ) ) {
-        QString simpleError;
-        if ( !runPymobiledeviceListCommand( pymobiledeviceExecutable,
-                                            pymobiledeviceSimpleListArguments(), &devices,
-                                            &simpleError ) ) {
-            if ( error && !simpleError.isEmpty() ) {
-                *error = simpleError;
-            }
-            return {};
-        }
-
-        if ( error ) {
-            error->clear();
-        }
-    }
-
-    if ( devices.isEmpty() && error ) {
-        *error = QObject::tr( "No iOS devices reported by pymobiledevice3." );
-    }
-    return devices;
-#endif
+    IosDeviceListProvider provider( executable );
+    return provider.listDevices( error );
 }
 
 QString IosLogProcessTransport::detectIosSyslogExecutable()
 {
-    return findExecutableAtKnownLocation( QStringLiteral( "pymobiledevice3" ) );
+    return IosDeviceListProvider::detectIosSyslogExecutable();
+}
+
+IosDeviceListProvider* IosLogProcessTransport::deviceListProvider() const
+{
+    return deviceProvider_.get();
 }
 
 bool IosLogProcessTransport::clearRemote( QString* error )
@@ -223,10 +79,28 @@ ProcessLiveSourceTransport::Command IosLogProcessTransport::streamingCommand() c
     // QProcess pipes stdout, isatty() is false so ANSI escape codes are never
     // emitted.  Wrap with /usr/bin/script to allocate a PTY so that
     // pymobiledevice3 sees a terminal and actually produces colored output.
+    //
+    // A PTY merges the child's stderr into stdout, which would let
+    // pymobiledevice3's diagnostic output (ERROR logs, urllib3 warnings) leak
+    // into the log view.  Run the inner command via a shell that redirects its
+    // stderr to the transport's temp file *outside* the PTY:
+    //   sh -c 'exec "$@" 2>"$0"' <stderrFile> <program> <args...>
+    // "$0" is the stderr file, "$@" is the program + args (passed through
+    // literally, with no shell-quoting hazard).  stderr is still captured for
+    // error detection (read from the temp file in the finished handler) but
+    // never reaches the log view.  macOS script(1) runs the command "with an
+    // optional argument vector" (execvp directly), so the sh -c string and the
+    // following args pass through unmodified.
     if ( ansiOutputEnabled_ ) {
-        auto args = QStringList{ QStringLiteral( "-q" ), QStringLiteral( "/dev/null" ),
-                                 innerCommand.program }
-                    + innerCommand.arguments;
+        auto args = QStringList{
+            QStringLiteral( "-q" ),
+            QStringLiteral( "/dev/null" ),
+            QStringLiteral( "/bin/sh" ),
+            QStringLiteral( "-c" ),
+            QStringLiteral( "exec \"$@\" 2>\"$0\"" ),
+            stderrFilePath(),
+            innerCommand.program,
+        } + innerCommand.arguments;
         return Command{ QStringLiteral( "/usr/bin/script" ), std::move( args ) };
     }
 #endif
@@ -246,7 +120,7 @@ ProcessLiveSourceTransport::Command IosLogProcessTransport::clearCommand() const
 
 QString IosLogProcessTransport::normalizedExecutable() const
 {
-    return normalizedIosSyslogExecutable( executable_ );
+    return IosDeviceListProvider::normalizedExecutable( executable_ );
 }
 
 QStringList IosLogProcessTransport::streamArguments() const

@@ -12,6 +12,7 @@
 #include <QTimer>
 
 #include "capturestore.h"
+#include "rollingfilemanager.h"
 #include "searchablelogdata.h"
 
 enum class LiveLogSaveAnsiMode {
@@ -29,6 +30,7 @@ class StreamingLogData : public SearchableLogData {
     void appendUtf8( const QByteArray& data );
     void finishInput();
     void clearCapture();
+    void setCaptureLimits( CaptureStore::Limits limits );
     bool bindOutputFile( const QString& outputPath );
     bool bindOutputFile( const QString& outputPath, LiveLogSaveAnsiMode ansiMode );
     QString boundOutputFile() const;
@@ -73,11 +75,21 @@ class StreamingLogData : public SearchableLogData {
     void scheduleLoadingFinished( int delayMs = 0 );
     ProcessedAnsiLine processedAnsiLine( LineNumber line ) const;
     void clearAnsiDisplayCache();
+    // Reads CaptureStore's pending trim result; if nonzero, clears it and
+    // invalidates the line-keyed raw/ANSI caches (their absolute line numbers
+    // shifted). Returns the consumed result so the caller can emit Truncated.
+    CaptureStore::TrimResult consumeTrimResult();
     void startOutputFlushTimer();
     void stopOutputFlushTimer();
     bool openDisplayOutputFile( const QString& outputPath );
     void closeDisplayOutputFile();
     bool writeDisplayLinesToOutput( LineNumber first, LinesCount count );
+    // Writes the lines appended in `appendResult` to the Strip-mode display
+    // file.  Addresses the appended lines by their current tail position so it
+    // is correct even when trimming has shifted line numbers — never by a
+    // [previous, current) delta (which underflows when trimming removes more
+    // lines than were added).
+    void writeAppendedDisplayLines( const CaptureStore::AppendResult& appendResult );
     klogg::vector<QString> getLines( LineNumber first, LinesCount number ) const;
     void rememberAppendedRawLines( const CaptureStore::AppendResult& appendResult );
     std::optional<RawLines> tryBuildCachedRawLines( LineNumber first, LinesCount number ) const;
@@ -91,7 +103,9 @@ class StreamingLogData : public SearchableLogData {
     QTimer loadingFinishedTimer_;
     QTimer outputFlushTimer_;
     QString boundOutputFile_;
-    QFile boundOutputHandle_;
+    RollingFileManager rollingDisplayOutput_;
+    qint64 rollingMaxFileSize_ = 0;
+    int rollingBackupCount_ = 0;
     LiveLogSaveAnsiMode outputSaveAnsiMode_ = LiveLogSaveAnsiMode::Strip;
     mutable std::mutex cachedRawBatchesMutex_;
     std::deque<CachedRawBatch> cachedRawBatches_;

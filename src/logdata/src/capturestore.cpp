@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <thread>
 
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
@@ -39,6 +40,28 @@ void reserveSegmentMemory( QByteArray& data, qint64 targetBytes, qint64 budgetBy
 
     const auto cappedTarget = std::min<qint64>( reserveTarget, std::numeric_limits<int>::max() );
     data.reserve( type_safe::narrow_cast<int>( cappedTarget ) );
+}
+
+// Appended lines always live at the tail of the store. Their first line number
+// must be derived from the CURRENT total (after commit + trim) so it stays
+// correct when trimming shifts every absolute line number down. Using the
+// pre-commit total leaves firstLine stale (too large by the trimmed count).
+LineNumber tailFirstLine( qint64 totalLines, LinesCount lineCount )
+{
+    const auto count = static_cast<qint64>( lineCount.get() );
+    return LineNumber( static_cast<LineNumber::UnderlyingType>(
+        totalLines >= count ? totalLines - count : 0 ) );
+}
+
+// Clamp untrusted limit inputs (session-restore JSON, hand-edited .ini) so the
+// rolling window math (rollingMaxFileSize * rollingBackupCount) and the backup
+// cleanup loop stay within their integer ranges.
+CaptureStore::Limits sanitizeLimits( CaptureStore::Limits limits )
+{
+    constexpr int kMaxRollingBackupCount = 100000;
+    limits.rollingBackupCount
+        = std::clamp( limits.rollingBackupCount, 0, kMaxRollingBackupCount );
+    return limits;
 }
 
 QDateTime latestModificationTime( const QFileInfo& entry )
@@ -110,7 +133,7 @@ CaptureStore::CaptureStore( QString captureId, QString rootPath, Limits limits )
     : captureId_( std::move( captureId ) )
     , rootPath_( rootPath.isEmpty() ? defaultRootPath() : std::move( rootPath ) )
     , capturePath_( QDir( rootPath_ ).filePath( captureId_ ) )
-    , limits_( limits )
+    , limits_( sanitizeLimits( limits ) )
 {
     ensureCaptureDir();
 }
@@ -233,6 +256,7 @@ CaptureStore::AppendResult CaptureStore::appendUtf8( const QByteArray& data )
         appendResult.lineCount
             = LinesCount( static_cast<LinesCount::UnderlyingType>( appendResult.endOfLines.size() ) );
         commitLines( appendResult );
+        appendResult.firstLine = tailFirstLine( totalLines_, appendResult.lineCount );
         if ( totalLines_ != originalLineCount ) {
             lastModified_ = QDateTime::currentDateTime();
         }
@@ -250,6 +274,7 @@ CaptureStore::AppendResult CaptureStore::appendUtf8( const QByteArray& data )
     appendResult.lineCount
         = LinesCount( static_cast<LinesCount::UnderlyingType>( appendResult.endOfLines.size() ) );
     commitLines( appendResult );
+    appendResult.firstLine = tailFirstLine( totalLines_, appendResult.lineCount );
     if ( totalLines_ != originalLineCount ) {
         lastModified_ = QDateTime::currentDateTime();
     }
@@ -275,10 +300,11 @@ CaptureStore::AppendResult CaptureStore::finishInput()
         appendResult.lineCount = 1_lcount;
         lastModified_ = QDateTime::currentDateTime();
     }
+    appendResult.firstLine = tailFirstLine( totalLines_, appendResult.lineCount );
 
     // Flush any pending output data
-    if ( boundOutputHandle_ && unflushedOutputBytes_ > 0 ) {
-        boundOutputHandle_->flush();
+    if ( rollingOutput_.isValid() && unflushedOutputBytes_ > 0 ) {
+        rollingOutput_.flush();
         resetOutputFlushCounters();
     }
     return appendResult;
@@ -287,8 +313,8 @@ CaptureStore::AppendResult CaptureStore::finishInput()
 void CaptureStore::flush()
 {
     const std::lock_guard<std::recursive_mutex> lock( mutex_ );
-    if ( boundOutputHandle_ && unflushedOutputBytes_ > 0 ) {
-        boundOutputHandle_->flush();
+    if ( rollingOutput_.isValid() && unflushedOutputBytes_ > 0 ) {
+        rollingOutput_.flush();
         resetOutputFlushCounters();
     }
 }
@@ -306,6 +332,7 @@ void CaptureStore::clear()
     maxLineLength_ = 0;
     nextSegmentId_ = 0;
     lastModified_ = QDateTime::currentDateTime();
+    lastTrimResult_ = {};
 
     const auto files = QDir( capturePath_ ).entryList( QDir::Files | QDir::NoDotAndDotDot );
     for ( const auto& fileName : files ) {
@@ -313,37 +340,162 @@ void CaptureStore::clear()
     }
 
     if ( !boundOutputFile_.isEmpty() ) {
-        QFile outputFile( boundOutputFile_ );
-        if ( outputFile.open( QIODevice::WriteOnly | QIODevice::Truncate ) ) {
-            outputFile.close();
+        rollingOutput_.deleteAll();
+        rollingOutput_ = RollingFileManager( boundOutputFile_, limits_.rollingMaxFileSize,
+                                             limits_.rollingBackupCount );
+        if ( !rollingOutput_.open( true ) ) {
+            LOG_WARNING << "CaptureStore::clear: failed to reopen output file: "
+                        << boundOutputFile_;
+            boundOutputFile_.clear();
         }
-        boundOutputHandle_.reset();
-        bindOutputFile( boundOutputFile_ );
     }
+}
+
+CaptureStore::TrimResult CaptureStore::trimToLimits()
+{
+    const std::lock_guard<std::recursive_mutex> lock( mutex_ );
+    TrimResult result;
+
+    if ( segments_.size() <= 1 ) {
+        return result;
+    }
+
+    // Rolling window: rollingMaxFileSize * rollingBackupCount.
+    // backupCount is the number of retained backups; the current file is
+    // tracked separately via fileSize_.  Use checked multiplication to guard
+    // against overflow from hand-edited or session-restored limits.
+    qint64 windowBytes = 0;
+    if ( limits_.rollingMaxFileSize > 0 && limits_.rollingBackupCount > 0 ) {
+        const auto backupCount = static_cast<qint64>( limits_.rollingBackupCount );
+        windowBytes
+            = limits_.rollingMaxFileSize > std::numeric_limits<qint64>::max() / backupCount
+                  ? std::numeric_limits<qint64>::max()
+                  : limits_.rollingMaxFileSize * backupCount;
+    }
+    const auto exceedsBytes = windowBytes > 0 && fileSize_ > windowBytes;
+    const auto exceedsLines = limits_.maxTotalLines > 0 && totalLines_ > limits_.maxTotalLines;
+
+    if ( !exceedsBytes && !exceedsLines ) {
+        return result;
+    }
+
+    LinesCount::UnderlyingType totalRemovedLines = 0;
+    bool removedMaxLine = false;
+
+    // Remove oldest segments (FIFO) until within limits.
+    // Never remove the active (last) segment.
+    while ( segments_.size() > 1 ) {
+        const auto stillOverBytes = windowBytes > 0 && fileSize_ > windowBytes;
+        const auto stillOverLines
+            = limits_.maxTotalLines > 0 && totalLines_ > limits_.maxTotalLines;
+
+        if ( !stillOverBytes && !stillOverLines ) {
+            break;
+        }
+
+        auto& front = segments_.front();
+        const auto segmentLines = klogg::ssize( front.lineOffsets );
+        const auto segmentBytes = front.byteSize;
+
+        // Track if we're removing the segment that held maxLineLength
+        for ( const auto len : front.lineLengths ) {
+            if ( len == maxLineLength_ ) {
+                removedMaxLine = true;
+            }
+        }
+
+        // Delete disk file if spilled
+        if ( front.spilled && !front.filePath.isEmpty() ) {
+            QFile::remove( front.filePath );
+        }
+
+        fileSize_ -= segmentBytes;
+        if ( front.memoryData ) {
+            memoryBytes_ -= front.memoryData->size();
+        }
+        totalLines_ -= segmentLines;
+        totalRemovedLines += static_cast<LinesCount::UnderlyingType>( segmentLines );
+
+        result.trimmedLines = result.trimmedLines + LinesCount( static_cast<LinesCount::UnderlyingType>( segmentLines ) );
+        result.trimmedBytes += segmentBytes;
+
+        segments_.erase( segments_.begin() );
+    }
+
+    // O(1) cumulative line count fixup: subtract removed lines from all remaining segments
+    if ( totalRemovedLines > 0 ) {
+        for ( auto& segment : segments_ ) {
+            segment.cumulativeEndLine
+                -= static_cast<qint64>( totalRemovedLines );
+        }
+    }
+
+    // Only recompute maxLineLength if we removed the segment that held it
+    if ( removedMaxLine ) {
+        maxLineLength_ = 0;
+        for ( const auto& segment : segments_ ) {
+            for ( const auto len : segment.lineLengths ) {
+                maxLineLength_ = qMax( maxLineLength_, len );
+            }
+        }
+    }
+
+    if ( result.trimmedLines > 0_lcount ) {
+        lastModified_ = QDateTime::currentDateTime();
+        lastTrimResult_ = result;
+
+        LOG_INFO << "CaptureStore trimmed " << result.trimmedLines.get() << " lines ("
+                 << result.trimmedBytes << " bytes), remaining: " << totalLines_ << " lines, "
+                 << fileSize_ << " bytes";
+    }
+
+    return result;
+}
+
+CaptureStore::TrimResult CaptureStore::lastTrimResult() const
+{
+    const std::lock_guard<std::recursive_mutex> lock( mutex_ );
+    return lastTrimResult_;
+}
+
+void CaptureStore::clearTrimResult()
+{
+    const std::lock_guard<std::recursive_mutex> lock( mutex_ );
+    lastTrimResult_ = {};
 }
 
 bool CaptureStore::bindOutputFile( const QString& outputPath )
 {
     const std::lock_guard<std::recursive_mutex> lock( mutex_ );
-    boundOutputHandle_.reset();
+    rollingOutput_.close();
+    rollingOutput_ = RollingFileManager();
     boundOutputFile_ = outputPath;
     if ( boundOutputFile_.isEmpty() ) {
         return true;
     }
 
     QDir().mkpath( QFileInfo( boundOutputFile_ ).absolutePath() );
-    auto outputFile = std::make_unique<QFile>( boundOutputFile_ );
-    if ( !outputFile->open( QIODevice::WriteOnly | QIODevice::Truncate ) ) {
+
+    rollingOutput_ = RollingFileManager( boundOutputFile_, limits_.rollingMaxFileSize,
+                                         limits_.rollingBackupCount );
+    if ( !rollingOutput_.open( true ) ) {
         boundOutputFile_.clear();
         return false;
     }
 
-    if ( !writeCaptureToDevice( outputFile.get() ) || !outputFile->flush() ) {
-        boundOutputFile_.clear();
-        return false;
+    // Write existing segments to the rolling file
+    for ( const auto& segment : segments_ ) {
+        if ( !writeSegmentToDevice( segment, rollingOutput_.currentFile() ) ) {
+            boundOutputFile_.clear();
+            rollingOutput_.close();
+            return false;
+        }
     }
+    // Replay writes directly to QFile, bypassing RollingFileManager::write().
+    // Sync the byte counter so needsRotation() reflects the true file size.
+    rollingOutput_.resyncSize();
+    rollingOutput_.flush();
 
-    boundOutputHandle_ = std::move( outputFile );
     resetOutputFlushCounters();
     return true;
 }
@@ -351,6 +503,12 @@ bool CaptureStore::bindOutputFile( const QString& outputPath )
 void CaptureStore::setOutputFlushedCallback( std::function<void()> callback )
 {
     outputFlushedCallback_ = std::move( callback );
+}
+
+void CaptureStore::setLimits( Limits limits )
+{
+    const std::lock_guard<std::recursive_mutex> lock( mutex_ );
+    limits_ = sanitizeLimits( std::move( limits ) );
 }
 
 QString CaptureStore::boundOutputFile() const
@@ -378,7 +536,8 @@ void CaptureStore::deleteCaptureFiles()
 {
     const std::lock_guard<std::recursive_mutex> lock( mutex_ );
     flush();
-    boundOutputHandle_.reset();
+    rollingOutput_.close();
+    rollingOutput_ = RollingFileManager();
     persistBufferedSegmentsOnDestroy_ = false;
     partialLine_.clear();
     segments_.clear();
@@ -686,7 +845,7 @@ void CaptureStore::commitLine( const QByteArray& lineBytes, bool terminated )
     segment.byteSize = segment.memoryData->size();
     segment.spilled = false;
 
-    if ( boundOutputHandle_ ) {
+    if ( rollingOutput_.isValid() ) {
         appendOutputBytes( terminated ? lineBytes + '\n' : lineBytes );
     }
 
@@ -708,7 +867,7 @@ void CaptureStore::commitLines( const AppendResult& appendResult )
         return;
     }
 
-    if ( boundOutputHandle_ ) {
+    if ( rollingOutput_.isValid() ) {
         if ( appendResult.endOfLines.size()
              > static_cast<size_t>( std::numeric_limits<int>::max() ) ) {
             throw std::runtime_error( "Too many output lines while committing capture batch" );
@@ -790,9 +949,21 @@ void CaptureStore::commitLines( const AppendResult& appendResult )
         maxLineLength_ = qMax( maxLineLength_, segmentMaxLineLength );
 
         rotateSegmentIfNeeded();
+        // Throttle spill operations to avoid frequent small spills under heavy load.
+        // Emergency spill if memory exceeds 2x budget.
         if ( memoryBytes_ > limits_.memoryBudgetBytes ) {
-            enforceMemoryBudget();
+            const auto now = QDateTime::currentMSecsSinceEpoch();
+            if ( memoryBytes_ > limits_.memoryBudgetBytes * 2
+                 || now - lastSpillTimeMs_ >= SpillThrottleMs ) {
+                lastSpillTimeMs_ = now;
+                enforceMemoryBudget();
+            }
         }
+    }
+
+    // Trim oldest segments if total limits are exceeded
+    if ( limits_.rollingMaxFileSize > 0 || limits_.maxTotalLines > 0 ) {
+        trimToLimits();
     }
 }
 
@@ -1000,49 +1171,50 @@ bool CaptureStore::writeSegmentToDevice( const Segment& segment, QIODevice* devi
     return true;
 }
 
-bool CaptureStore::writeCaptureToDevice( QIODevice* device ) const
-{
-    for ( const auto& segment : segments_ ) {
-        if ( !writeSegmentToDevice( segment, device ) ) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 void CaptureStore::appendOutputBytes( const QByteArray& bytes, int lineCount )
 {
-    if ( !boundOutputHandle_ ) {
+    if ( !rollingOutput_.isValid() ) {
         return;
     }
 
-    if ( boundOutputHandle_->write( bytes ) != bytes.size() ) {
-        LOG_WARNING << "Bound output file write failed, unbinding: " << boundOutputFile_;
-        boundOutputHandle_.reset();
+    const auto written = rollingOutput_.write( bytes );
+    if ( written <= 0 ) {
+        LOG_WARNING << "Rolling output file write failed, unbinding: " << boundOutputFile_;
+        rollingOutput_.close();
+        rollingOutput_ = RollingFileManager();
         boundOutputFile_.clear();
         return;
     }
 
-    unflushedOutputBytes_ += bytes.size();
+    // write() now writes the whole batch across rotations and reports whether it
+    // rotated. The previous size-before/after heuristic missed rotations that
+    // left the new file at least as large as the old one (e.g. a single write
+    // that fills, rotates and writes a large remainder from an empty file),
+    // skipping the in-memory window trim on the single-line commit path.
+    if ( rollingOutput_.rotated() ) {
+        trimToWindowSize();
+    }
+
+    unflushedOutputBytes_ += written;
     unflushedOutputLines_ += lineCount;
     flushOutputIfNeeded();
 }
 
 void CaptureStore::flushOutputIfNeeded()
 {
-    if ( !boundOutputHandle_ || unflushedOutputBytes_ == 0 ) {
+    if ( !rollingOutput_.isValid() || unflushedOutputBytes_ == 0 ) {
         return;
     }
 
-    // Time-based flushing is handled by StreamingLogData's QTimer,
-    // so only check byte and line thresholds here.
     if ( unflushedOutputBytes_ >= OutputFlushBytesThreshold
          || unflushedOutputLines_ >= OutputFlushLinesThreshold ) {
-        if ( !boundOutputHandle_->flush() ) {
-            LOG_WARNING << "Bound output file flush failed, unbinding: " << boundOutputFile_;
-            boundOutputHandle_.reset();
+        if ( !rollingOutput_.flush() ) {
+            LOG_WARNING << "Rolling output file flush failed, unbinding: "
+                        << boundOutputFile_;
+            rollingOutput_.close();
+            rollingOutput_ = RollingFileManager();
             boundOutputFile_.clear();
+            resetOutputFlushCounters();
             return;
         }
         resetOutputFlushCounters();
@@ -1056,4 +1228,13 @@ void CaptureStore::resetOutputFlushCounters()
 {
     unflushedOutputBytes_ = 0;
     unflushedOutputLines_ = 0;
+}
+
+void CaptureStore::trimToWindowSize()
+{
+    // Called when the rolling file rotates. Trim in-memory segments to match the window.
+    // trimToLimits() already checks whether any limits are configured and
+    // acquires the (recursive) mutex — safe because the caller chain
+    // (appendOutputBytes → commitLines → appendUtf8) already holds it.
+    trimToLimits();
 }

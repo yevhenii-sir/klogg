@@ -29,16 +29,22 @@
 #include <QFileInfo>
 #include <QFont>
 #include <QGuiApplication>
+#include <QGroupBox>
 #include <QJsonDocument>
+#include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QSpinBox>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QUuid>
+#include <QWidget>
 
 #include <map>
 
 #include "adbprocesstransport.h"
+#include "adbdevicelistprovider.h"
 #include "adblogcatsource.h"
 #include "adblogcatdialog.h"
 #include "commandargumenttokenizer.h"
@@ -186,6 +192,11 @@ class TestIosLogProcessTransport : public IosLogProcessTransport {
         return clearCommand();
     }
 
+    QString stderrFilePathForTest() const
+    {
+        return stderrFilePath();
+    }
+
     void filterReceivedBytesForTest( QByteArray& data )
     {
         filterReceivedBytes( data );
@@ -329,9 +340,19 @@ TEST_CASE( "IosLogProcessTransport passes color flags as pymobiledevice3 top-lev
     const auto plainCmd = plainTransport.streamingCommandForTest();
 
 #ifdef Q_OS_MAC
-    REQUIRE( colorCmd.arguments
-             == QStringList{ QStringLiteral( "-q" ), QStringLiteral( "/dev/null" ),
-                             QStringLiteral( "/opt/homebrew/bin/pymobiledevice3" ),
+    // Wrapped with /usr/bin/script + a shell that redirects the inner
+    // command's stderr to the transport's temp file (outside the PTY) so
+    // pymobiledevice3 diagnostics never reach the log view.
+    REQUIRE( colorCmd.program == QStringLiteral( "/usr/bin/script" ) );
+    REQUIRE( colorCmd.arguments.size() == 12 );
+    REQUIRE( colorCmd.arguments[ 0 ] == QStringLiteral( "-q" ) );
+    REQUIRE( colorCmd.arguments[ 1 ] == QStringLiteral( "/dev/null" ) );
+    REQUIRE( colorCmd.arguments[ 2 ] == QStringLiteral( "/bin/sh" ) );
+    REQUIRE( colorCmd.arguments[ 3 ] == QStringLiteral( "-c" ) );
+    REQUIRE( colorCmd.arguments[ 4 ] == QStringLiteral( "exec \"$@\" 2>\"$0\"" ) );
+    REQUIRE( colorCmd.arguments[ 5 ] == colorTransport.stderrFilePathForTest() );
+    REQUIRE( colorCmd.arguments.mid( 6 )
+             == QStringList{ QStringLiteral( "/opt/homebrew/bin/pymobiledevice3" ),
                              QStringLiteral( "--color" ), QStringLiteral( "syslog" ),
                              QStringLiteral( "live" ), QStringLiteral( "--udid" ),
                              QStringLiteral( "00008030-001C195E36D8802E" ) } );
@@ -380,11 +401,19 @@ TEST_CASE( "IosLogProcessTransport wraps with PTY when ANSI output is enabled" )
 
     const auto colorCmd = colorTransport.streamingCommandForTest();
 #ifdef Q_OS_MAC
-    // On macOS, the command is wrapped with script to allocate a PTY.
+    // On macOS, the command is wrapped with script to allocate a PTY.  The
+    // inner command runs via sh -c 'exec "$@" 2>"$0"' so its stderr is
+    // redirected to the transport's temp file (outside the PTY) and cannot
+    // leak into the log view.
     REQUIRE( colorCmd.program == QStringLiteral( "/usr/bin/script" ) );
-    REQUIRE( colorCmd.arguments
-             == QStringList{ QStringLiteral( "-q" ), QStringLiteral( "/dev/null" ),
-                             QStringLiteral( "/opt/homebrew/bin/pymobiledevice3" ),
+    REQUIRE( colorCmd.arguments[ 0 ] == QStringLiteral( "-q" ) );
+    REQUIRE( colorCmd.arguments[ 1 ] == QStringLiteral( "/dev/null" ) );
+    REQUIRE( colorCmd.arguments[ 2 ] == QStringLiteral( "/bin/sh" ) );
+    REQUIRE( colorCmd.arguments[ 3 ] == QStringLiteral( "-c" ) );
+    REQUIRE( colorCmd.arguments[ 4 ] == QStringLiteral( "exec \"$@\" 2>\"$0\"" ) );
+    REQUIRE( colorCmd.arguments[ 5 ] == colorTransport.stderrFilePathForTest() );
+    REQUIRE( colorCmd.arguments.mid( 6 )
+             == QStringList{ QStringLiteral( "/opt/homebrew/bin/pymobiledevice3" ),
                              QStringLiteral( "--color" ), QStringLiteral( "syslog" ),
                              QStringLiteral( "live" ), QStringLiteral( "--udid" ),
                              QStringLiteral( "00008030-001C195E36D8802E" ) } );
@@ -490,6 +519,7 @@ TEST_CASE( "IosLogProcessTransport PTY wrapper forces ANSI output from script-em
                   "else\n"
                   "  echo 'NO_ANSI 12:00:00 App Hello'\n"
                   "fi\n"
+                  "echo 'STDERR_LEAK pymobiledevice3 ERROR Device not found' >&2\n"
                   "sleep 5\n" );
     script.close();
     REQUIRE( script.setPermissions( QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner ) );
@@ -522,6 +552,10 @@ TEST_CASE( "IosLogProcessTransport PTY wrapper forces ANSI output from script-em
         REQUIRE( accumulated.contains( '\x1b' ) );
         // Must NOT contain the no-TTY fallback text.
         REQUIRE_FALSE( accumulated.contains( QByteArrayLiteral( "NO_ANSI" ) ) );
+        // pymobiledevice3's stderr must NOT leak into the log view, even though
+        // the PTY (script) merges stdout/stderr — the sh -c wrapper redirects
+        // the inner command's stderr to the transport's temp file.
+        REQUIRE_FALSE( accumulated.contains( QByteArrayLiteral( "STDERR_LEAK" ) ) );
 
         colorTransport.disconnectTransport();
         QCoreApplication::processEvents();
@@ -556,6 +590,8 @@ TEST_CASE( "IosLogProcessTransport PTY wrapper forces ANSI output from script-em
         REQUIRE_FALSE( accumulated.contains( '\x1b' ) );
         // Must contain the no-TTY fallback text.
         REQUIRE( accumulated.contains( QByteArrayLiteral( "NO_ANSI" ) ) );
+        // Without the PTY wrapper, stderr goes to the temp file too — no leak.
+        REQUIRE_FALSE( accumulated.contains( QByteArrayLiteral( "STDERR_LEAK" ) ) );
 
         plainTransport.disconnectTransport();
         QCoreApplication::processEvents();
@@ -674,6 +710,68 @@ TEST_CASE( "AdbProcessTransport listDevices returns an error when adb cannot sta
 
     REQUIRE( devices.isEmpty() );
     REQUIRE_FALSE( error.isEmpty() );
+}
+
+TEST_CASE( "AdbDeviceListProvider returns same results as static listDevices" )
+{
+    // The provider abstraction should return identical results to the
+    // old static method on AdbProcessTransport.
+    QString providerError;
+    AdbDeviceListProvider provider( QStringLiteral( "/path/that/does/not/exist/adb" ) );
+    const auto devices = provider.listDevices( &providerError );
+
+    QString staticError;
+    const auto staticDevices
+        = AdbProcessTransport::listDevices( QStringLiteral( "/path/that/does/not/exist/adb" ),
+                                            &staticError );
+
+    REQUIRE( devices.isEmpty() );
+    REQUIRE( staticDevices.isEmpty() );
+    REQUIRE_FALSE( providerError.isEmpty() );
+    REQUIRE_FALSE( staticError.isEmpty() );
+}
+
+TEST_CASE( "AdbDeviceListProvider isDeviceAvailable returns true on subprocess error" )
+{
+    // When the list command itself fails, isDeviceAvailable should return true
+    // (optimistic fallback — let connectTransport handle the real error).
+    AdbDeviceListProvider provider( QStringLiteral( "/nonexistent/adb" ) );
+    CHECK( provider.isDeviceAvailable( QStringLiteral( "any-serial" ) ) );
+}
+
+TEST_CASE( "AdbDeviceListProvider listDevicesAsync returns a valid future" )
+{
+    AdbDeviceListProvider provider( QStringLiteral( "/nonexistent/adb" ) );
+    auto future = provider.listDevicesAsync();
+
+    // The future should be valid (has been started).
+    // Use isStarted() instead of isValid() for Qt 5 compatibility
+    // (isValid() was added in Qt 6.0).
+    REQUIRE( future.isStarted() );
+
+    // Wait for it to complete — should resolve to an empty list since
+    // the executable doesn't exist.
+    future.waitForFinished();
+    REQUIRE( future.result().isEmpty() );
+}
+
+TEST_CASE( "IosDeviceListProvider isDeviceAvailable returns true on subprocess error" )
+{
+    IosDeviceListProvider provider( QStringLiteral( "/nonexistent/pymobiledevice3" ) );
+    CHECK( provider.isDeviceAvailable( QStringLiteral( "any-udid" ) ) );
+}
+
+TEST_CASE( "IosDeviceListProvider listDevicesAsync returns a valid future" )
+{
+    IosDeviceListProvider provider( QStringLiteral( "/nonexistent/pymobiledevice3" ) );
+    auto future = provider.listDevicesAsync();
+
+    // Use isStarted() instead of isValid() for Qt 5 compatibility.
+    REQUIRE( future.isStarted() );
+
+    future.waitForFinished();
+    // On non-macOS or with nonexistent executable, result should be empty.
+    REQUIRE( future.result().isEmpty() );
 }
 
 TEST_CASE( "AdbProcessTransport surfaces immediate post-start failures as transport errors" )
@@ -812,6 +910,7 @@ TEST_CASE( "OptionsDialog reset buttons restore defaults and can be applied" )
         QStringLiteral( "resetGeneralDefaultsButton" ),
         QStringLiteral( "resetViewDefaultsButton" ),
         QStringLiteral( "resetFileDefaultsButton" ),
+        QStringLiteral( "resetLiveSourceDefaultsButton" ),
         QStringLiteral( "restoreShortcutsDefaults" ),
         QStringLiteral( "resetAdvancedDefaultsButton" ),
     };
@@ -852,6 +951,68 @@ TEST_CASE( "OptionsDialog reset buttons restore defaults and can be applied" )
     for ( const auto& defaultShortcut : defaultOpenFileShortcuts ) {
         CHECK( restoredOpenFileShortcuts.contains( defaultShortcut ) );
     }
+}
+
+TEST_CASE( "OptionsDialog File and Live Source tab widgets do not overlap vertically" )
+{
+    ScopedOptionsDialogConfigurationGuard configGuard;
+
+    OptionsDialog dialog;
+
+    auto* tabWidget = dialog.findChild<QTabWidget*>( QStringLiteral( "tabWidget" ) );
+    REQUIRE( tabWidget != nullptr );
+
+    dialog.show();
+    QCoreApplication::processEvents();
+
+    // Check each tab for widget overlap at minimum dialog size
+    const QStringList tabNames{
+        QStringLiteral( "file_watch_tab" ),
+        QStringLiteral( "liveSourceTab" ),
+    };
+
+    for ( const auto& tabName : tabNames ) {
+        auto* tab = dialog.findChild<QWidget*>( tabName );
+        REQUIRE( tab != nullptr );
+        tabWidget->setCurrentWidget( tab );
+        QCoreApplication::processEvents();
+
+        dialog.resize( dialog.minimumSizeHint() );
+        QCoreApplication::processEvents();
+
+        auto* layout = tab->layout();
+        REQUIRE( layout != nullptr );
+
+        QList<QWidget*> visibleChildren;
+        for ( int i = 0; i < layout->count(); ++i ) {
+            auto* item = layout->itemAt( i );
+            if ( item && item->widget() && item->widget()->isVisible() ) {
+                visibleChildren.append( item->widget() );
+            }
+        }
+
+        REQUIRE( visibleChildren.size() >= 2 );
+
+        for ( int i = 0; i < visibleChildren.size() - 1; ++i ) {
+            auto* current = visibleChildren[i];
+            auto* next = visibleChildren[i + 1];
+
+            const auto currentBottom = current->geometry().bottom();
+            const auto nextTop = next->geometry().top();
+            const int gap = nextTop - currentBottom;
+
+            INFO( "[" << tabName.toStdString() << "] Widget " << i << ": \""
+                  << current->objectName().toStdString() << "\" bottom=" << currentBottom
+                  << " vs Widget " << ( i + 1 ) << ": \""
+                  << next->objectName().toStdString() << "\" top=" << nextTop
+                  << " gap=" << gap );
+
+            CHECK( gap >= 1 );
+        }
+    }
+
+    dialog.close();
+    QCoreApplication::processEvents();
 }
 
 TEST_CASE( "OptionsDialog adb detect button fills the executable field with the resolved adb path" )
@@ -944,6 +1105,32 @@ class FiniteSuccessfulTestTransport : public ProcessLiveSourceTransport {
 #endif
     }
 };
+
+// Exits during startup after writing a recognizable line to stderr — exercises
+// the connectTransport() startup-failure error-capture path.
+class StartupStderrFailureTransport : public ProcessLiveSourceTransport {
+  public:
+    Command streamingCommand() const override
+    {
+#ifdef Q_OS_WIN
+        return { QStringLiteral( "cmd" ),
+                 { QStringLiteral( "/c" ),
+                   QStringLiteral( "echo startup-boom 1>&2 & exit /b 13" ) } };
+#else
+        return { QStringLiteral( "/bin/sh" ),
+                 { QStringLiteral( "-c" ), QStringLiteral( "echo startup-boom >&2; exit 13" ) } };
+#endif
+    }
+
+    Command clearCommand() const override
+    {
+#ifdef Q_OS_WIN
+        return { QStringLiteral( "cmd" ), { QStringLiteral( "/c" ), QStringLiteral( "echo" ) } };
+#else
+        return { QStringLiteral( "true" ), {} };
+#endif
+    }
+};
 } // namespace
 
 TEST_CASE( "ProcessLiveSourceTransport suppresses errorOccurred during intentional disconnect" )
@@ -1010,6 +1197,111 @@ TEST_CASE( "ProcessLiveSourceTransport async disconnect returns immediately" )
     // Process events to let async cleanup finish
     QCoreApplication::processEvents();
     QTest::qWait( 2000 );
+    QCoreApplication::processEvents();
+}
+
+// ---------------------------------------------------------------------------
+// connectTransportAsync — non-blocking startup detection (replaces the
+// blocking waitForStarted + grace loop for the auto-reconnect path)
+// ---------------------------------------------------------------------------
+
+TEST_CASE( "ProcessLiveSourceTransport connectTransportAsync returns immediately" )
+{
+    LongRunningTestTransport transport;
+
+    QElapsedTimer timer;
+    timer.start();
+    transport.connectTransportAsync();
+    const auto elapsed = timer.elapsed();
+
+    // Must not block for the 250ms grace period or 3s waitForStarted.
+    CHECK( elapsed < 100 );
+
+    transport.disconnectTransport();
+    QCoreApplication::processEvents();
+    QTest::qWait( 200 );
+    QCoreApplication::processEvents();
+}
+
+namespace {
+bool spyContainsState( const SafeQSignalSpy& spy, LiveSourceTransport::State target )
+{
+    for ( int i = 0; i < spy.count(); ++i ) {
+        if ( spy.at( i ).at( 0 ).value<LiveSourceTransport::State>() == target ) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
+TEST_CASE( "ProcessLiveSourceTransport connectTransportAsync connects via grace timer" )
+{
+    LongRunningTestTransport transport;
+
+    SafeQSignalSpy stateSpy( &transport, SIGNAL( stateChanged( LiveSourceTransport::State ) ) );
+    transport.connectTransportAsync();
+
+    // safeWait returns on the first signal (Connecting); we must keep
+    // processing events until the grace timer fires and transitions to
+    // Connected.
+    QElapsedTimer deadline;
+    deadline.start();
+    while ( !spyContainsState( stateSpy, LiveSourceTransport::State::Connected )
+            && deadline.elapsed() < 2000 ) {
+        QCoreApplication::processEvents( QEventLoop::AllEvents, 50 );
+    }
+    REQUIRE( spyContainsState( stateSpy, LiveSourceTransport::State::Connected ) );
+
+    transport.disconnectTransport();
+    QCoreApplication::processEvents();
+    QTest::qWait( 200 );
+    QCoreApplication::processEvents();
+}
+
+TEST_CASE( "ProcessLiveSourceTransport connectTransportAsync detects startup failure" )
+{
+    TestAdbProcessTransport transport( QStringLiteral( "/path/that/does/not/exist/adb" ),
+                                      QStringLiteral( "serial" ), {} );
+
+    SafeQSignalSpy errorSpy( &transport, SIGNAL( errorOccurred( QString ) ) );
+    SafeQSignalSpy stateSpy( &transport, SIGNAL( stateChanged( LiveSourceTransport::State ) ) );
+    transport.connectTransportAsync();
+
+    // A non-existent executable triggers errorOccurred(FailedToStart) within
+    // the next event loop cycle.
+    QElapsedTimer deadline;
+    deadline.start();
+    while ( !spyContainsState( stateSpy, LiveSourceTransport::State::Error )
+            && deadline.elapsed() < 2000 ) {
+        QCoreApplication::processEvents( QEventLoop::AllEvents, 50 );
+    }
+    REQUIRE( spyContainsState( stateSpy, LiveSourceTransport::State::Error ) );
+    REQUIRE( errorSpy.count() >= 1 );
+    REQUIRE_FALSE( transport.lastError().isEmpty() );
+}
+
+TEST_CASE( "ProcessLiveSourceTransport connectTransportAsync detects fast exit" )
+{
+    StartupStderrFailureTransport transport;
+
+    SafeQSignalSpy stateSpy( &transport, SIGNAL( stateChanged( LiveSourceTransport::State ) ) );
+    transport.connectTransportAsync();
+
+    // The process exits (with stderr) within the grace period; the finished
+    // handler must detect this and transition to Error.
+    QElapsedTimer deadline;
+    deadline.start();
+    while ( !spyContainsState( stateSpy, LiveSourceTransport::State::Error )
+            && deadline.elapsed() < 2000 ) {
+        QCoreApplication::processEvents( QEventLoop::AllEvents, 50 );
+    }
+    REQUIRE( spyContainsState( stateSpy, LiveSourceTransport::State::Error ) );
+    REQUIRE( transport.lastError().contains( QStringLiteral( "startup-boom" ) ) );
+
+    transport.disconnectTransport();
+    QCoreApplication::processEvents();
+    QTest::qWait( 200 );
     QCoreApplication::processEvents();
 }
 
@@ -1515,4 +1807,488 @@ TEST_CASE( "AdbProcessTransport expands tilde in user-configured executable" )
     const auto streaming = transport.streamingCommandForTest();
     REQUIRE_FALSE( streaming.program.startsWith( QLatin1Char( '~' ) ) );
     REQUIRE( streaming.program.contains( QStringLiteral( "android/sdk/platform-tools/adb" ) ) );
+}
+
+// ---------------------------------------------------------------------------
+// Live source auto-reconnect and rolling file settings tests
+// ---------------------------------------------------------------------------
+
+namespace {
+// Helper: read all lines from a StreamingLogData as a single string for assertions
+QString allLogLines( const std::shared_ptr<StreamingLogData>& logData )
+{
+    QStringList lines;
+    const auto count = logData->getNbLine().get();
+    for ( LineNumber::UnderlyingType i = 0; i < count; ++i ) {
+        lines.append( logData->getLineString( LineNumber( i ) ) );
+    }
+    return lines.join( QLatin1Char( '\n' ) );
+}
+
+// Helper: wait until auto-reconnect is no longer active (max attempts exhausted
+// or reconnect cancelled), i.e., the reconnect timer has stopped.
+bool waitForReconnectExhausted( const AdbLogcatSource& source, int timeoutMs = 10000 )
+{
+    QElapsedTimer deadline;
+    deadline.start();
+    while ( deadline.elapsed() < timeoutMs ) {
+        QCoreApplication::processEvents( QEventLoop::AllEvents, 50 );
+        QTest::qWait( 50 );
+        // Exhausted when both the timer isn't running and state is Error
+        // (not Disconnected, which would mean manual disconnect)
+        if ( !source.isAutoReconnectActive()
+             && source.state() == AdbLogcatSource::State::Error ) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
+TEST_CASE( "AdbLogcatSource keeps auto-reconnect failures out of streaming log data" )
+{
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    const auto captureId = makeCaptureId();
+    auto logData = std::make_shared<StreamingLogData>( captureId, tempDir.path() );
+
+    // Use a non-existent executable path so that connectTransport() always fails
+    // synchronously (waitForStarted returns false), triggering the error+reconnect
+    // cycle without depending on process timing.
+    const AdbLogcatSessionData sessionData{
+        QStringLiteral( "/nonexistent/path/to/adb" ),
+        QStringLiteral( "emulator-5554" ),
+        QStringLiteral( "Test Device" ),
+        QString{},
+        captureId,
+        QString{},
+        LiveLogSourceType::AdbLogcat,
+    };
+
+    AdbLogcatSource source( sessionData, logData );
+    source.setAutoReconnectEnabled( true );
+    source.setAutoReconnectMaxAttempts( 1 ); // Only 1 retry to keep test fast
+
+    SafeQSignalSpy attemptSpy( &source, &AdbLogcatSource::reconnectAttemptStarted );
+
+    // connectSource() will fail because the executable doesn't exist →
+    // triggers scheduleReconnect → timer fires → attemptReconnect fails →
+    // max attempts reached → streaming log must stay empty (silent retries)
+    REQUIRE_FALSE( source.connectSource() );
+    REQUIRE( source.state() == AdbLogcatSource::State::Error );
+
+    // Wait for the reconnect cycle to complete (max attempts exhausted)
+    REQUIRE( waitForReconnectExhausted( source, 5000 ) );
+
+    // At least one reconnect attempt should have been started
+    REQUIRE( attemptSpy.count() >= 1 );
+
+    // Reconnect failures must NOT be written to the streaming log data
+    // (fully silent retries — failures are surfaced via the status bar only).
+    const auto logText = allLogLines( logData );
+    INFO( "Streaming log content: " << logText.toStdString() );
+
+    CHECK_FALSE( logText.contains( QStringLiteral( "auto-reconnect attempt" ) ) );
+    CHECK_FALSE( logText.contains( QStringLiteral( "failed" ) ) );
+    CHECK_FALSE( logText.contains( QStringLiteral( "max attempts" ) ) );
+    CHECK_FALSE( logText.contains( QStringLiteral( "giving up" ) ) );
+    CHECK_FALSE( logText.contains( QStringLiteral( "reconnected" ) ) );
+
+    source.disconnectSource();
+    QCoreApplication::processEvents();
+    QTest::qWait( 200 );
+    QCoreApplication::processEvents();
+}
+
+TEST_CASE( "AdbLogcatSource exponential backoff preserves attempt count after rapid "
+           "post-connect death" )
+{
+#ifdef Q_OS_WIN
+    WARN( "Skipping POSIX shell based backoff test on Windows." );
+    return;
+#else
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    // Script that outputs a line, runs long enough to survive the grace period
+    // (~500ms), then exits. This triggers the brief-connect-then-die pattern
+    // that would reset the backoff counter without the reconnectionProven_ guard.
+    const auto scriptPath = tempDir.filePath( QStringLiteral( "adb" ) );
+    QFile script( scriptPath );
+    REQUIRE( script.open( QIODevice::WriteOnly | QIODevice::Text ) );
+    // No stdout output — the process exits without producing data.
+    // This triggers the failure path (reconnectionProven_ stays false).
+    script.write( "#!/bin/sh\n"
+                  "sleep 0.5\n"
+                  "echo 'device disconnected' >&2\n"
+                  "exit 1\n" );
+    script.close();
+    REQUIRE( script.setPermissions( QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner ) );
+
+    const auto captureId = makeCaptureId();
+    auto logData = std::make_shared<StreamingLogData>( captureId, tempDir.path() );
+    const AdbLogcatSessionData sessionData{
+        scriptPath,
+        QStringLiteral( "emulator-5554" ),
+        QStringLiteral( "Test Device" ),
+        QString{},
+        captureId,
+        QString{},
+        LiveLogSourceType::AdbLogcat,
+    };
+
+    AdbLogcatSource source( sessionData, logData );
+    source.setAutoReconnectEnabled( true );
+    source.setAutoReconnectMaxAttempts( 3 );
+
+    // First connection succeeds (process starts, outputs, survives grace period)
+    REQUIRE( source.connectSource() );
+    REQUIRE( source.state() == AdbLogcatSource::State::Connected );
+
+    // Wait for the process to exit and trigger auto-reconnect
+    REQUIRE( waitForSourceState( source, AdbLogcatSource::State::Error ) );
+    REQUIRE( source.isAutoReconnectActive() );
+
+    // Wait for the first reconnect attempt to start
+    SafeQSignalSpy attemptSpy( &source, &AdbLogcatSource::reconnectAttemptStarted );
+    REQUIRE( attemptSpy.safeWait( 3000 ) );
+
+    // The reconnect attempt should have incremented the counter
+    // (reconnectAttempt_ should be >= 1 after attemptReconnect increments it)
+    const auto attemptAfterFirstReconnect = source.reconnectAttempt();
+    INFO( "reconnectAttempt after first reconnect: " << attemptAfterFirstReconnect );
+    CHECK( attemptAfterFirstReconnect >= 1 );
+
+    // Wait for the reconnect to fail (process exits after 0.5s) and trigger
+    // another scheduleReconnect cycle
+    REQUIRE( waitForSourceState( source, AdbLogcatSource::State::Error ) );
+
+    // After the reconnect attempt connected briefly then died, the backoff
+    // counter should still be preserved (NOT reset to 0).
+    // The reconnectionProven_ flag prevents reset on brief connections.
+    const auto attemptAfterSecondError = source.reconnectAttempt();
+    INFO( "reconnectAttempt after second error: " << attemptAfterSecondError );
+    CHECK( attemptAfterSecondError >= 1 );
+
+    source.cancelAutoReconnect();
+    source.disconnectSource();
+    QCoreApplication::processEvents();
+    QTest::qWait( 500 );
+    QCoreApplication::processEvents();
+#endif
+}
+
+TEST_CASE( "AdbLogcatSource keeps async reconnect failure out of streaming log" )
+{
+#ifdef Q_OS_WIN
+    WARN( "Skipping POSIX shell based async failure test on Windows." );
+    return;
+#else
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    // Script that runs just long enough to survive the grace period (~400ms)
+    // then exits with an error. This triggers the async failure path where
+    // connectTransport() returns true but the process dies shortly after.
+    const auto scriptPath = tempDir.filePath( QStringLiteral( "adb" ) );
+    QFile script( scriptPath );
+    REQUIRE( script.open( QIODevice::WriteOnly | QIODevice::Text ) );
+    script.write( "#!/bin/sh\n"
+                  "sleep 0.4\n"
+                  "echo 'device offline' >&2\n"
+                  "exit 1\n" );
+    script.close();
+    REQUIRE( script.setPermissions( QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner ) );
+
+    const auto captureId = makeCaptureId();
+    auto logData = std::make_shared<StreamingLogData>( captureId, tempDir.path() );
+    const AdbLogcatSessionData sessionData{
+        scriptPath,
+        QStringLiteral( "emulator-5554" ),
+        QStringLiteral( "Test Device" ),
+        QString{},
+        captureId,
+        QString{},
+        LiveLogSourceType::AdbLogcat,
+    };
+
+    AdbLogcatSource source( sessionData, logData );
+    source.setAutoReconnectEnabled( true );
+    source.setAutoReconnectMaxAttempts( 2 );
+
+    // Initial connect: process starts, survives grace period, then dies
+    REQUIRE( source.connectSource() );
+    REQUIRE( source.state() == AdbLogcatSource::State::Connected );
+
+    // Wait for async process death → Error → scheduleReconnect
+    REQUIRE( waitForSourceState( source, AdbLogcatSource::State::Error ) );
+    REQUIRE( source.isAutoReconnectActive() );
+
+    // Wait for the reconnect attempt to fire and the process to die again
+    SafeQSignalSpy attemptSpy( &source, &AdbLogcatSource::reconnectAttemptStarted );
+    REQUIRE( attemptSpy.safeWait( 5000 ) );
+
+    // Wait for the reconnect attempt's process to die asynchronously
+    REQUIRE( waitForSourceState( source, AdbLogcatSource::State::Error ) );
+
+    // Reconnect failures must NOT be written to the streaming log data
+    // (fully silent retries — failures are surfaced via the status bar only).
+    // The mock script's stderr ("device offline") must also not leak.
+    const auto logText = allLogLines( logData );
+    INFO( "Streaming log content after async reconnect failure:\n" << logText.toStdString() );
+
+    CHECK_FALSE( logText.contains( QStringLiteral( "auto-reconnect attempt" ) ) );
+    CHECK_FALSE( logText.contains( QStringLiteral( "failed" ) ) );
+    CHECK_FALSE( logText.contains( QStringLiteral( "device offline" ) ) );
+    CHECK_FALSE( logText.contains( QStringLiteral( "reconnected" ) ) );
+
+    source.cancelAutoReconnect();
+    source.disconnectSource();
+    QCoreApplication::processEvents();
+    QTest::qWait( 500 );
+    QCoreApplication::processEvents();
+#endif
+}
+
+TEST_CASE( "OptionsDialog loads and persists live source auto-reconnect and rolling file settings" )
+{
+    if ( isHeadlessDialogTestEnvironment() ) {
+        WARN( "OptionsDialog UI coverage is skipped on headless/offscreen platforms" );
+        return;
+    }
+
+    ScopedOptionsDialogConfigurationGuard configGuard;
+    auto& config = Configuration::getSynced();
+
+    // Set non-default values
+    config.setLiveAutoReconnectEnabled( true );
+    config.setLiveAutoReconnectMaxAttempts( 10 );
+    config.setLiveCaptureRollingMaxFileSize( 1048576 ); // 1 MB in bytes
+    config.setLiveCaptureRollingBackupCount( 5 );
+    config.save();
+
+    OptionsDialog dialog;
+    auto* autoReconnectCheckBox
+        = dialog.findChild<QCheckBox*>( QStringLiteral( "liveSourceAutoReconnectCheckBox" ) );
+    auto* maxAttemptsSpinBox
+        = dialog.findChild<QSpinBox*>( QStringLiteral( "liveSourceMaxAttemptsSpinBox" ) );
+    auto* maxFileSizeSpinBox
+        = dialog.findChild<QSpinBox*>( QStringLiteral( "liveSourceRollingMaxFileSizeSpinBox" ) );
+    auto* backupCountSpinBox
+        = dialog.findChild<QSpinBox*>( QStringLiteral( "liveSourceRollingBackupCountSpinBox" ) );
+
+    REQUIRE( autoReconnectCheckBox != nullptr );
+    REQUIRE( maxAttemptsSpinBox != nullptr );
+    REQUIRE( maxFileSizeSpinBox != nullptr );
+    REQUIRE( backupCountSpinBox != nullptr );
+
+    // Verify initial values loaded from config
+    CHECK( autoReconnectCheckBox->isChecked() );
+    CHECK( maxAttemptsSpinBox->value() == 10 );
+    // UI stores MB, config stores bytes: 1048576 bytes = 1 MB
+    CHECK( maxFileSizeSpinBox->value() == 1 );
+    CHECK( backupCountSpinBox->value() == 5 );
+
+    // Edit values
+    autoReconnectCheckBox->setChecked( false );
+    maxAttemptsSpinBox->setValue( 20 );
+    maxFileSizeSpinBox->setValue( 50 ); // 50 MB
+    backupCountSpinBox->setValue( 10 );
+
+    REQUIRE( QMetaObject::invokeMethod( &dialog, "updateConfigFromDialog", Qt::DirectConnection ) );
+
+    auto& restoredConfig = Configuration::getSynced();
+    CHECK( restoredConfig.liveAutoReconnectEnabled() == false );
+    CHECK( restoredConfig.liveAutoReconnectMaxAttempts() == 20 );
+    // 50 MB = 52428800 bytes
+    CHECK( restoredConfig.liveCaptureRollingMaxFileSize() == 50 * 1024 * 1024 );
+    CHECK( restoredConfig.liveCaptureRollingBackupCount() == 10 );
+}
+
+TEST_CASE( "OptionsDialog reset restores live source settings to defaults" )
+{
+    if ( isHeadlessDialogTestEnvironment() ) {
+        WARN( "OptionsDialog UI coverage is skipped on headless/offscreen platforms" );
+        return;
+    }
+
+    ScopedOptionsDialogConfigurationGuard configGuard;
+    auto& config = Configuration::getSynced();
+
+    // Set non-default values
+    config.setLiveAutoReconnectEnabled( false );
+    config.setLiveAutoReconnectMaxAttempts( 99 );
+    config.setLiveCaptureRollingMaxFileSize( 999 * 1024 * 1024 );
+    config.setLiveCaptureRollingBackupCount( 50 );
+    config.save();
+
+    OptionsDialog dialog;
+    auto* resetButton = dialog.findChild<QPushButton*>( QStringLiteral( "resetFileDefaultsButton" ) );
+    REQUIRE( resetButton != nullptr );
+
+    // Click the reset button
+    resetButton->click();
+    QCoreApplication::processEvents();
+
+    // Verify widgets show defaults
+    auto* autoReconnectCheckBox
+        = dialog.findChild<QCheckBox*>( QStringLiteral( "liveSourceAutoReconnectCheckBox" ) );
+    auto* maxAttemptsSpinBox
+        = dialog.findChild<QSpinBox*>( QStringLiteral( "liveSourceMaxAttemptsSpinBox" ) );
+    auto* maxFileSizeSpinBox
+        = dialog.findChild<QSpinBox*>( QStringLiteral( "liveSourceRollingMaxFileSizeSpinBox" ) );
+    auto* backupCountSpinBox
+        = dialog.findChild<QSpinBox*>( QStringLiteral( "liveSourceRollingBackupCountSpinBox" ) );
+
+    REQUIRE( autoReconnectCheckBox != nullptr );
+    REQUIRE( maxAttemptsSpinBox != nullptr );
+    REQUIRE( maxFileSizeSpinBox != nullptr );
+    REQUIRE( backupCountSpinBox != nullptr );
+
+    const Configuration defaults;
+    CHECK( autoReconnectCheckBox->isChecked() == defaults.liveAutoReconnectEnabled() );
+    CHECK( maxAttemptsSpinBox->value() == defaults.liveAutoReconnectMaxAttempts() );
+    CHECK( maxFileSizeSpinBox->value()
+           == static_cast<int>( defaults.liveCaptureRollingMaxFileSize() / ( 1024 * 1024 ) ) );
+    CHECK( backupCountSpinBox->value() == defaults.liveCaptureRollingBackupCount() );
+
+    // Apply the reset values to config
+    REQUIRE( QMetaObject::invokeMethod( &dialog, "updateConfigFromDialog", Qt::DirectConnection ) );
+
+    auto& restoredConfig = Configuration::getSynced();
+    CHECK( restoredConfig.liveAutoReconnectEnabled() == defaults.liveAutoReconnectEnabled() );
+    CHECK( restoredConfig.liveAutoReconnectMaxAttempts() == defaults.liveAutoReconnectMaxAttempts() );
+    CHECK( restoredConfig.liveCaptureRollingMaxFileSize()
+           == defaults.liveCaptureRollingMaxFileSize() );
+    CHECK( restoredConfig.liveCaptureRollingBackupCount()
+           == defaults.liveCaptureRollingBackupCount() );
+}
+
+TEST_CASE( "ProcessLiveSourceTransport surfaces real stderr on startup failure" )
+{
+    StartupStderrFailureTransport transport;
+
+    REQUIRE_FALSE( transport.connectTransport() );
+    // stderr is redirected to a file via setStandardErrorFile(); the startup
+    // path must read that file (not readAllStandardError(), which is empty).
+    REQUIRE( transport.lastError().contains( QStringLiteral( "startup-boom" ) ) );
+
+    transport.disconnectTransport();
+    QTest::qWait( 200 );
+}
+
+TEST_CASE( "AdbLogcatSource does not auto-reconnect before being enabled" )
+{
+#ifdef Q_OS_WIN
+    WARN( "Skipping POSIX shell based auto-reconnect default test on Windows." );
+#else
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    const auto captureId = makeCaptureId();
+    auto logData = std::make_shared<StreamingLogData>( captureId, tempDir.path() );
+    // A non-existent executable fails connectTransport() deterministically in
+    // waitForStarted() (no dependence on the 250ms startup-grace window).
+    const AdbLogcatSessionData sessionData{
+        QStringLiteral( "/path/that/does/not/exist/adb" ),
+        QStringLiteral( "emulator-5554" ),
+        QStringLiteral( "Pixel Test" ),
+        QString{},
+        captureId,
+        QString{},
+        LiveLogSourceType::AdbLogcat,
+    };
+    AdbLogcatSource source( sessionData, logData );
+
+    // No setAutoReconnectEnabled() call: the member default must be disabled so
+    // a failing connect does not arm the reconnect timer.
+    REQUIRE_FALSE( source.connectSource() );
+    QCoreApplication::processEvents();
+    REQUIRE_FALSE( source.isAutoReconnectActive() );
+
+    source.disconnectSource();
+    QCoreApplication::processEvents();
+    QTest::qWait( 200 );
+    QCoreApplication::processEvents();
+#endif
+}
+
+TEST_CASE( "AdbLogcatSource manual reconnect resets the attempt counter" )
+{
+#ifdef Q_OS_WIN
+    WARN( "Skipping POSIX shell based reconnect reset test on Windows." );
+#else
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    const auto captureId = makeCaptureId();
+    auto logData = std::make_shared<StreamingLogData>( captureId, tempDir.path() );
+    // A non-existent executable fails connectTransport() deterministically in
+    // waitForStarted() (no dependence on the 250ms startup-grace window).
+    const AdbLogcatSessionData sessionData{
+        QStringLiteral( "/path/that/does/not/exist/adb" ),
+        QStringLiteral( "emulator-5554" ),
+        QStringLiteral( "Pixel Test" ),
+        QString{},
+        captureId,
+        QString{},
+        LiveLogSourceType::AdbLogcat,
+    };
+    AdbLogcatSource source( sessionData, logData );
+    source.setAutoReconnectEnabled( true );
+    source.setAutoReconnectMaxAttempts( 50 );
+
+    REQUIRE_FALSE( source.connectSource() ); // fails, schedules first reconnect (~1s)
+
+    // Wait for at least one auto-reconnect attempt to fire and increment.
+    QElapsedTimer deadline;
+    deadline.start();
+    while ( source.reconnectAttempt() < 1 && deadline.elapsed() < 5000 ) {
+        QCoreApplication::processEvents( QEventLoop::AllEvents, 50 );
+        QTest::qWait( 20 );
+    }
+    REQUIRE( source.reconnectAttempt() >= 1 );
+
+    // A manual reconnect must reset the stale attempt counter.
+    source.reconnectSource();
+    REQUIRE( source.reconnectAttempt() == 0 );
+
+    source.setAutoReconnectEnabled( false );
+    source.disconnectSource();
+    QCoreApplication::processEvents();
+    QTest::qWait( 200 );
+    QCoreApplication::processEvents();
+#endif
+}
+
+TEST_CASE( "DeviceListProvider async enumeration is safe against provider destruction" )
+{
+#ifdef Q_OS_WIN
+    WARN( "Skipping POSIX shell based device-provider lifetime test on Windows." );
+#else
+    QTemporaryDir tempDir;
+    REQUIRE( tempDir.isValid() );
+
+    // A slow fake adb keeps the async task in flight while we destroy the
+    // provider, exercising the lifetime guard in listDevicesAsync().
+    const auto scriptPath = tempDir.filePath( QStringLiteral( "adb" ) );
+    QFile script( scriptPath );
+    REQUIRE( script.open( QIODevice::WriteOnly | QIODevice::Text ) );
+    script.write( "#!/bin/sh\nsleep 1\nexit 0\n" );
+    script.close();
+    REQUIRE( script.setPermissions( QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner ) );
+
+    auto* provider = new AdbDeviceListProvider( scriptPath );
+    QFuture<QList<AdbDeviceInfo>> future = provider->listDevicesAsync();
+
+    // Destroy the provider while the task is still in flight. The QPointer guard
+    // must keep this from dereferencing freed memory.
+    delete provider;
+    future.waitForFinished(); // must not crash
+
+    REQUIRE( future.resultCount() == 1 );
+    // Guarded path yields an empty list when the provider no longer exists.
+    REQUIRE( future.result().isEmpty() );
+#endif
 }
