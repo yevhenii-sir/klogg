@@ -14,6 +14,11 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QSpinBox;
+class QTreeWidget;
+
+#ifdef KLOGG_WITH_IMOBILEDEVICE
+class IosDeviceManager;
+#endif
 
 class IosLogDialog : public QDialog {
     Q_OBJECT
@@ -25,16 +30,28 @@ class IosLogDialog : public QDialog {
 
   private Q_SLOTS:
     void refreshDevices();
+    void onDevicesEnumerated();
+
+#ifdef KLOGG_WITH_IMOBILEDEVICE
+    void onDeviceAdded( const QString& udid, const QString& name );
+    void onDeviceRemoved( const QString& udid );
+#endif
 
   private:
     void updateAcceptState();
     void loadSettings();
     void saveSettings() const;
-    // Populates the device combo from the async refresh result.
-    void onDevicesEnumerated();
+    void populateDeviceCombo( const QList<IosDeviceInfo>& devices );
 
-  private:
+    // pymobiledevice3-based device enumeration (async)
     QFutureWatcher<QList<IosDeviceInfo>>* deviceRefreshWatcher_ = nullptr;
+
+#ifdef KLOGG_WITH_IMOBILEDEVICE
+    // Native device monitoring (hot-plug via libimobiledevice)
+    IosDeviceManager* nativeDeviceManager_ = nullptr;
+    QTreeWidget* nativeDeviceList_ = nullptr;
+#endif
+
     QLineEdit* executableEdit_ = nullptr;
     QPushButton* refreshButton_ = nullptr;
     QComboBox* deviceCombo_ = nullptr;

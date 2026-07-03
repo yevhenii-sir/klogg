@@ -7,6 +7,9 @@
 #include "adbprocesstransport.h"
 #include "capturestore.h"
 #include "ioslogprocesstransport.h"
+#ifdef KLOGG_WITH_IMOBILEDEVICE
+#include "iosnativelogtransport.h"
+#endif
 #include "log.h"
 #include "livesourcetransport.h"
 #include "streaminglogdata.h"
@@ -25,6 +28,15 @@ LiveLogSourceType sourceTypeFromString( const QString& sourceType )
 std::unique_ptr<LiveSourceTransport> makeTransport( const AdbLogcatSessionData& sessionData )
 {
     if ( sessionData.sourceType == LiveLogSourceType::IosLogStream ) {
+#ifdef KLOGG_WITH_IMOBILEDEVICE
+        // When libimobiledevice is available, prefer the native transport
+        // which streams syslog data directly without spawning a subprocess.
+        if ( sessionData.adbExecutable.isEmpty()
+             || sessionData.adbExecutable.compare( QStringLiteral( "native" ),
+                                                    Qt::CaseInsensitive ) == 0 ) {
+            return std::make_unique<IosNativeLogTransport>( sessionData.deviceSerial );
+        }
+#endif
         return std::make_unique<IosLogProcessTransport>( sessionData.adbExecutable,
                                                          sessionData.deviceSerial,
                                                          sessionData.extraArgs,

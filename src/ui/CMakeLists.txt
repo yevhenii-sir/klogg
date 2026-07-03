@@ -21,6 +21,7 @@ add_library(
   ${CMAKE_CURRENT_SOURCE_DIR}/include/savefavoritedialog.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/filterdiffdialog.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/infoline.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/iosnativelogtransport.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/ioslogdialog.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/ioslogprocesstransport.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/iosdevicelistprovider.h
@@ -86,6 +87,7 @@ add_library(
   ${CMAKE_CURRENT_SOURCE_DIR}/src/savefavoritedialog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/filterdiffdialog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/infoline.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/iosnativelogtransport.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ioslogdialog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ioslogprocesstransport.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/iosdevicelistprovider.cpp
@@ -151,6 +153,10 @@ target_link_libraries(
          Qt${QT_VERSION_MAJOR}::Xml
          Qt${QT_VERSION_MAJOR}::Svg
 )
+
+if(KLOGG_USE_IMOBILEDEVICE)
+  target_link_libraries(klogg_ui PUBLIC klogg_ios_log_provider)
+endif()
 
 if(WIN32)
   target_link_libraries(klogg_ui PUBLIC user32)

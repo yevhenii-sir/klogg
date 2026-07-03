@@ -1,0 +1,23 @@
+{
+  "name": "klogg",
+  "version-string": "continuous",
+  "description": "klogg log viewer",
+  "dependencies": [
+    {
+      "name": "libimobiledevice",
+      "platform": "windows & !uwp"
+    },
+    {
+      "name": "libplist",
+      "platform": "windows & !uwp"
+    },
+    {
+      "name": "libimobiledevice-glue",
+      "platform": "windows & !uwp"
+    },
+    {
+      "name": "libusbmuxd",
+      "platform": "windows & !uwp"
+    }
+  ]
+}

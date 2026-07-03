@@ -77,6 +77,7 @@ option(KLOGG_USE_SENTRY "Use Sentry" OFF)
 option(KLOGG_GENERIC_CPU "Build for generic CPU" OFF)
 option(KLOGG_PERF_MEASURE_STREAMING "Enable streaming pipeline performance meters (off by default, for local perf profiling)" OFF)
 option(KLOGG_OSX_DEPLOYMENT_TARGET "Override target MacOS version" "")
+option(KLOGG_USE_IMOBILEDEVICE "Use libimobiledevice for iOS syslog streaming" OFF)
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 4)
   set(KLOGG_ARCH 32)
@@ -258,6 +259,14 @@ set(KLOGG_QT_VERSION ${Qt${QT_VERSION_MAJOR}Core_VERSION})
 
 message("Qt version ${KLOGG_QT_VERSION}")
 message("LTO ${KLOGG_USE_LTO}")
+message("iOS log streaming (libimobiledevice) ${KLOGG_USE_IMOBILEDEVICE}")
+
+if(KLOGG_USE_IMOBILEDEVICE)
+  find_package(unofficial-libimobiledevice CONFIG REQUIRED)
+  find_package(unofficial-libplist CONFIG REQUIRED)
+  find_package(unofficial-libimobiledevice-glue CONFIG REQUIRED)
+  find_package(unofficial-libusbmuxd CONFIG REQUIRED)
+endif()
 
 if(APPLE)
   if(${KLOGG_OSX_DEPLOYMENT_TARGET})

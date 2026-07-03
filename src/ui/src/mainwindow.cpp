@@ -101,6 +101,9 @@
 #include "highlightersmenu.h"
 #include "issuereporter.h"
 #include "ioslogdialog.h"
+#ifdef KLOGG_WITH_IMOBILEDEVICE
+#include "ios_device_manager.h"
+#endif
 #include "klogg_version.h"
 #include "logger.h"
 #include "mainwindowtext.h"
@@ -211,6 +214,17 @@ MainWindow::MainWindow( WindowSession session )
     readSettings();
 
     createTrayIcon();
+
+#ifdef KLOGG_WITH_IMOBILEDEVICE
+    // Start monitoring for iOS devices via libimobiledevice
+    iosDeviceManager_ = new IosDeviceManager( this );
+    connect( iosDeviceManager_, &IosDeviceManager::deviceAdded, this,
+             [ this ]( const IosDeviceManager::DeviceInfo& info ) {
+                 LOG_INFO << "iOS device auto-detected: " << info.name.toStdString()
+                          << " (" << info.udid.toStdString() << ")";
+             } );
+    iosDeviceManager_->startMonitoring();
+#endif
 
     // Connect the signals to the mux (they will be forwarded to the
     // "current" crawlerwidget
@@ -579,7 +593,7 @@ void MainWindow::createActions()
 
     openIosLogStreamAction = new QAction( tr( "Open iOS Log Stream..." ), this );
     openIosLogStreamAction->setStatusTip( tr( "Open iOS device logs as a live source" ) );
-#ifndef Q_OS_MAC
+#if !defined( Q_OS_MAC ) && !defined( KLOGG_WITH_IMOBILEDEVICE )
     openIosLogStreamAction->setVisible( false );
 #endif
     connect( openIosLogStreamAction, &QAction::triggered, this,
@@ -1146,14 +1160,15 @@ void MainWindow::openAdbLogcat()
 
 void MainWindow::openIosLogStream()
 {
-#ifdef Q_OS_MAC
+#if defined( KLOGG_WITH_IMOBILEDEVICE ) || defined( Q_OS_MAC )
     IosLogDialog dialog( this );
     if ( dialog.exec() == QDialog::Accepted ) {
         openAdbLogcatSource( dialog.sessionData(), true );
     }
 #else
     QMessageBox::information( this, tr( "Open iOS Log Stream" ),
-                              tr( "iOS log streaming is supported only on macOS." ) );
+                              tr( "iOS log streaming requires either pymobiledevice3 (macOS) "
+                                  "or libimobiledevice (any platform)." ) );
 #endif
 }
 

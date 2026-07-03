@@ -7,5 +7,10 @@ add_subdirectory(regex)
 add_subdirectory(logdata)
 add_subdirectory(filewatch)
 add_subdirectory(versioncheck)
+
+if(KLOGG_USE_IMOBILEDEVICE)
+  add_subdirectory(ios_log_provider)
+endif()
+
 add_subdirectory(ui)
 add_subdirectory(app)

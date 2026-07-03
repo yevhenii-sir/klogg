@@ -49,6 +49,10 @@
 #include <memory>
 #include <mutex>
 
+#ifdef KLOGG_WITH_IMOBILEDEVICE
+#include "ios_device_manager.h"
+#endif
+
 #include "configuration.h"
 #include "crawlerwidget.h"
 #include "downloader.h"
@@ -345,6 +349,10 @@ class MainWindow : public QMainWindow {
     TabbedScratchPad scratchPad_;
 
     QTemporaryDir tempDir_;
+
+#ifdef KLOGG_WITH_IMOBILEDEVICE
+    IosDeviceManager* iosDeviceManager_ = nullptr;
+#endif
 
     bool isMaximized_ = false;
     bool isCloseFromTray_ = false;
