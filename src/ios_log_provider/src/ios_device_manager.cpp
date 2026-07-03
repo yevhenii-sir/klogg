@@ -23,134 +23,19 @@
 
 #include "log.h"
 
+#include <QCoreApplication>
+#include <QMutex>
+#include <QtConcurrent>
+
 #include <cstring>
 
-IosDeviceManager::IosDeviceManager( QObject* parent )
-    : QObject( parent )
+namespace {
+
+// Query device info off the GUI thread to avoid blocking the UI
+// for 5-10 seconds per device (lockdown calls are slow).
+IosDeviceManager::DeviceInfo queryDeviceInfoOffThread( const QString& udid )
 {
-}
-
-IosDeviceManager::~IosDeviceManager()
-{
-    stopMonitoring();
-}
-
-QVector<IosDeviceManager::DeviceInfo> IosDeviceManager::availableDevices() const
-{
-    return devices_.values().toVector();
-}
-
-void IosDeviceManager::startMonitoring()
-{
-    if ( subscription_ ) {
-        return;
-    }
-
-    auto result = idevice_events_subscribe( &subscription_, deviceEventCallback, this );
-    if ( result != IDEVICE_E_SUCCESS ) {
-        LOG_ERROR << "Failed to subscribe to device events: " << result;
-        return;
-    }
-
-    LOG_INFO << "Started monitoring iOS devices";
-    refreshDevices();
-}
-
-void IosDeviceManager::stopMonitoring()
-{
-    if ( subscription_ ) {
-        idevice_events_unsubscribe( subscription_ );
-        subscription_ = nullptr;
-        LOG_INFO << "Stopped monitoring iOS devices";
-    }
-}
-
-void IosDeviceManager::refreshDevices()
-{
-    int count = 0;
-    char** deviceList = nullptr;
-
-    auto result = idevice_get_device_list( &deviceList, &count );
-    if ( result != IDEVICE_E_SUCCESS ) {
-        LOG_ERROR << "Failed to get device list: " << result;
-        return;
-    }
-
-    QStringList currentUdids;
-    for ( int i = 0; i < count; ++i ) {
-        currentUdids << QString::fromUtf8( deviceList[ i ] );
-    }
-
-    QStringList keys = devices_.keys();
-    for ( const auto& udid : keys ) {
-        if ( !currentUdids.contains( udid ) ) {
-            onDeviceRemoved( udid );
-        }
-    }
-
-    for ( const auto& udid : currentUdids ) {
-        if ( !devices_.contains( udid ) ) {
-            onDeviceAdded( udid );
-        }
-    }
-
-    idevice_device_list_free( deviceList );
-}
-
-void IosDeviceManager::deviceEventCallback( const idevice_event_t* event, void* user_data )
-{
-    if ( !event || !user_data ) {
-        return;
-    }
-
-    auto* self = static_cast<IosDeviceManager*>( user_data );
-    QString udid = QString::fromUtf8( event->udid );
-
-    switch ( event->event ) {
-    case IDEVICE_DEVICE_ADD:
-        QMetaObject::invokeMethod( self, [ self, udid ]() { self->onDeviceAdded( udid ); },
-                                    Qt::QueuedConnection );
-        break;
-    case IDEVICE_DEVICE_REMOVE:
-        QMetaObject::invokeMethod( self, [ self, udid ]() { self->onDeviceRemoved( udid ); },
-                                    Qt::QueuedConnection );
-        break;
-    case IDEVICE_DEVICE_PAIRED:
-        QMetaObject::invokeMethod( self, [ self, udid ]() { self->onDeviceAdded( udid ); },
-                                    Qt::QueuedConnection );
-        break;
-    }
-}
-
-void IosDeviceManager::onDeviceAdded( const QString& udid )
-{
-    auto info = queryDeviceInfo( udid );
-    if ( info.udid.isEmpty() ) {
-        return;
-    }
-
-    bool isNew = !devices_.contains( udid );
-    devices_[ udid ] = info;
-
-    if ( isNew ) {
-        LOG_INFO << "iOS device added: " << info.name << " (" << udid << ")";
-    }
-
-    Q_EMIT deviceAdded( info );
-}
-
-void IosDeviceManager::onDeviceRemoved( const QString& udid )
-{
-    if ( devices_.contains( udid ) ) {
-        LOG_INFO << "iOS device removed: " << devices_[ udid ].name << " (" << udid << ")";
-        devices_.remove( udid );
-        Q_EMIT deviceRemoved( udid );
-    }
-}
-
-IosDeviceManager::DeviceInfo IosDeviceManager::queryDeviceInfo( const QString& udid )
-{
-    DeviceInfo info;
+    IosDeviceManager::DeviceInfo info;
     info.udid = udid;
 
     idevice_t device = nullptr;
@@ -238,6 +123,149 @@ IosDeviceManager::DeviceInfo IosDeviceManager::queryDeviceInfo( const QString& u
     idevice_free( device );
 
     return info;
+}
+
+} // anonymous namespace
+
+IosDeviceManager::IosDeviceManager( QObject* parent )
+    : QObject( parent )
+{
+}
+
+IosDeviceManager::~IosDeviceManager()
+{
+    stopMonitoring();
+}
+
+QVector<IosDeviceManager::DeviceInfo> IosDeviceManager::availableDevices() const
+{
+    return devices_.values().toVector();
+}
+
+void IosDeviceManager::startMonitoring()
+{
+    if ( subscription_ ) {
+        return;
+    }
+
+    auto result = idevice_events_subscribe( &subscription_, deviceEventCallback, this );
+    if ( result != IDEVICE_E_SUCCESS ) {
+        LOG_ERROR << "Failed to subscribe to device events: " << result;
+        return;
+    }
+
+    LOG_INFO << "Started monitoring iOS devices";
+    refreshDevices();
+}
+
+void IosDeviceManager::stopMonitoring()
+{
+    if ( subscription_ ) {
+        idevice_events_unsubscribe( subscription_ );
+        subscription_ = nullptr;
+        LOG_INFO << "Stopped monitoring iOS devices";
+    }
+}
+
+void IosDeviceManager::refreshDevices()
+{
+    int count = 0;
+    char** deviceList = nullptr;
+
+    auto result = idevice_get_device_list( &deviceList, &count );
+    if ( result != IDEVICE_E_SUCCESS ) {
+        LOG_ERROR << "Failed to get device list: " << result;
+        return;
+    }
+
+    QStringList currentUdids;
+    for ( int i = 0; i < count; ++i ) {
+        currentUdids << QString::fromUtf8( deviceList[ i ] );
+    }
+
+    idevice_device_list_free( deviceList );
+
+    QStringList keys = devices_.keys();
+    for ( const auto& udid : keys ) {
+        if ( !currentUdids.contains( udid ) ) {
+            onDeviceRemoved( udid );
+        }
+    }
+
+    // Query device info asynchronously to avoid blocking the GUI thread.
+    // Each query can take 5-10 seconds (lockdown handshake), so we run
+    // them on the thread pool and emit deviceAdded when done.
+    for ( const auto& udid : currentUdids ) {
+        if ( !devices_.contains( udid ) ) {
+            queryDeviceInfoAsync( udid );
+        }
+    }
+}
+
+void IosDeviceManager::deviceEventCallback( const idevice_event_t* event, void* user_data )
+{
+    if ( !event || !user_data ) {
+        return;
+    }
+
+    auto* self = static_cast<IosDeviceManager*>( user_data );
+    QString udid = QString::fromUtf8( event->udid );
+
+    switch ( event->event ) {
+    case IDEVICE_DEVICE_ADD:
+        QMetaObject::invokeMethod( self, [ self, udid ]() { self->onDeviceAdded( udid ); },
+                                    Qt::QueuedConnection );
+        break;
+    case IDEVICE_DEVICE_REMOVE:
+        QMetaObject::invokeMethod( self, [ self, udid ]() { self->onDeviceRemoved( udid ); },
+                                    Qt::QueuedConnection );
+        break;
+    case IDEVICE_DEVICE_PAIRED:
+        QMetaObject::invokeMethod( self, [ self, udid ]() { self->onDeviceAdded( udid ); },
+                                    Qt::QueuedConnection );
+        break;
+    }
+}
+
+void IosDeviceManager::onDeviceAdded( const QString& udid )
+{
+    // Query device info asynchronously — lockdown calls block for seconds
+    queryDeviceInfoAsync( udid );
+}
+
+void IosDeviceManager::onDeviceRemoved( const QString& udid )
+{
+    if ( devices_.contains( udid ) ) {
+        LOG_INFO << "iOS device removed: " << devices_[ udid ].name << " (" << udid << ")";
+        devices_.remove( udid );
+        Q_EMIT deviceRemoved( udid );
+    }
+}
+
+void IosDeviceManager::queryDeviceInfoAsync( const QString& udid )
+{
+    // Run the slow lockdown query off the GUI thread
+    QPointer<IosDeviceManager> self( this );
+    auto future = QtConcurrent::run( [ self, udid ]() {
+        auto info = queryDeviceInfoOffThread( udid );
+        if ( info.udid.isEmpty() ) {
+            return;
+        }
+        // Marshal the result back to the GUI thread
+        QMetaObject::invokeMethod(
+            self, [ self, info ]() {
+                if ( !self ) {
+                    return;
+                }
+                bool isNew = !self->devices_.contains( info.udid );
+                self->devices_[ info.udid ] = info;
+                if ( isNew ) {
+                    LOG_INFO << "iOS device added: " << info.name << " (" << info.udid << ")";
+                }
+                Q_EMIT self->deviceAdded( info );
+            },
+            Qt::QueuedConnection );
+    } );
 }
 
 #endif // KLOGG_WITH_IMOBILEDEVICE

@@ -63,8 +63,8 @@ class IosDeviceManager : public QObject {
     static void deviceEventCallback( const idevice_event_t* event, void* user_data );
     void onDeviceAdded( const QString& udid );
     void onDeviceRemoved( const QString& udid );
-
-    DeviceInfo queryDeviceInfo( const QString& udid );
+    // Queries device info on a background thread (lockdown calls block for seconds)
+    void queryDeviceInfoAsync( const QString& udid );
 
     idevice_subscription_context_t subscription_ = nullptr;
     QMap<QString, DeviceInfo> devices_;
